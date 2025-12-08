@@ -6,14 +6,14 @@ use crate::{atomic::Ordering, hint, queue::QueuePtr};
 ///
 /// This struct is `Send` but not `Sync`. It can be moved to another thread, but cannot be shared
 /// across threads.
-pub struct Sender {
-    ptr: QueuePtr,
+pub struct Sender<T> {
+    ptr: QueuePtr<T>,
     local_head: usize,
     mask: usize,
 }
 
-impl Sender {
-    pub(crate) fn new(queue_ptr: QueuePtr, mask: usize) -> Self {
+impl<T> Sender<T> {
+    pub(crate) fn new(queue_ptr: QueuePtr<T>, mask: usize) -> Self {
         Self {
             ptr: queue_ptr,
             local_head: 0,
@@ -27,28 +27,28 @@ impl Sender {
     ///
     /// * `true` if the value was successfully sent.
     /// * `false` if the queue is full.
-    pub fn try_send(&mut self, value: usize) -> bool {
+    pub fn try_send(&mut self, value: T) -> Result<(), T> {
         let current_tail = self.load_tail();
         let new_tail = (current_tail + 1) & self.mask;
 
         if new_tail == self.local_head {
             self.load_head();
             if new_tail == self.local_head {
-                return false;
+                return Err(value);
             }
         }
 
         self.ptr.set(current_tail, value);
         self.store_tail(new_tail);
 
-        true
+        Ok(())
     }
 
     /// Sends a value into the queue, blocking if necessary.
     ///
     /// This method uses a spin loop to wait for available space in the queue.
     /// For a non-blocking alternative, use [`Sender::try_send`].
-    pub fn send(&mut self, value: usize) {
+    pub fn send(&mut self, value: T) {
         let current_tail = self.load_tail();
         let new_tail = (current_tail + 1) & self.mask;
 
@@ -65,8 +65,12 @@ impl Sender {
     ///
     /// This method yields the current task if the queue is full.
     #[cfg(feature = "async")]
-    pub async fn send_async(&mut self, value: usize) {
+    pub async fn send_async(&mut self, value: T) {
         use std::task::Poll;
+
+        // We need to store the value in an Option so we can move it into the queue
+        // when space becomes available
+        let mut value = Some(value);
 
         futures::future::poll_fn(|ctx| {
             let current_tail = self.load_tail();
@@ -89,7 +93,7 @@ impl Sender {
                 }
             }
 
-            self.ptr.set(current_tail, value);
+            self.ptr.set(current_tail, value.take().unwrap());
             self.store_tail(new_tail);
 
             if self.ptr.receiver_sleeping().load(Ordering::SeqCst) {
@@ -119,7 +123,7 @@ impl Sender {
     /// It returns a slice of [`MaybeUninit`](std::mem::MaybeUninit) to prevent UB, you can use
     /// [`copy_nonoverlapping`](std::ptr::copy_nonoverlapping) if you want fast copying between
     /// this and your own data.
-    pub fn write_buffer(&mut self) -> &mut [MaybeUninit<usize>] {
+    pub fn write_buffer(&mut self) -> &mut [MaybeUninit<T>] {
         let start = self.load_tail();
         let next = (start + 1) & self.mask;
 
@@ -176,4 +180,4 @@ impl Sender {
     }
 }
 
-unsafe impl Send for Sender {}
+unsafe impl<T: Send> Send for Sender<T> {}

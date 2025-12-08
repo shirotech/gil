@@ -42,9 +42,9 @@ mod sender;
 /// use std::num::NonZeroUsize;
 /// use gil::channel;
 ///
-/// let (tx, rx) = channel(NonZeroUsize::new(1024).unwrap());
+/// let (tx, rx) = channel::<usize>(NonZeroUsize::new(1024).unwrap());
 /// ```
-pub fn channel(capacity: NonZeroUsize) -> (Sender, Receiver) {
+pub fn channel<T>(capacity: NonZeroUsize) -> (Sender<T>, Receiver<T>) {
     let (queue, mask) = QueuePtr::with_capacity(capacity);
     (Sender::new(queue.clone(), mask), Receiver::new(queue, mask))
 }
@@ -56,7 +56,7 @@ mod test {
     #[test]
     fn test_valid_sends() {
         const COUNTS: NonZeroUsize = NonZeroUsize::new(4096).unwrap();
-        let (mut tx, mut rx) = channel(COUNTS);
+        let (mut tx, mut rx) = channel::<usize>(COUNTS);
 
         thread::spawn(move || {
             for i in 0..COUNTS.get() << 3 {
@@ -76,7 +76,7 @@ mod test {
         futures::executor::block_on(async {
             const COUNTS: NonZeroUsize = NonZeroUsize::new(4096).unwrap();
 
-            let (mut tx, mut rx) = channel(COUNTS);
+            let (mut tx, mut rx) = channel::<usize>(COUNTS);
 
             thread::spawn(move || {
                 for i in 0..COUNTS.get() << 1 {
@@ -94,7 +94,7 @@ mod test {
     fn test_batched_send_recv() {
         const CAPACITY: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
         const TOTAL_ITEMS: usize = 1024 << 4;
-        let (mut tx, mut rx) = channel(CAPACITY);
+        let (mut tx, mut rx) = channel::<usize>(CAPACITY);
 
         thread::spawn(move || {
             let mut sent = 0;
@@ -128,6 +128,41 @@ mod test {
 
         assert_eq!(received, TOTAL_ITEMS);
     }
+
+    #[test]
+    fn test_drop_remaining_elements() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        #[derive(Clone)]
+        struct DropCounter(#[allow(dead_code)] Arc<()>);
+
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        DROP_COUNT.store(0, Ordering::SeqCst);
+
+        {
+            let (mut tx, rx) = channel::<DropCounter>(NonZeroUsize::new(16).unwrap());
+
+            // Send 5 items but don't receive them
+            for _ in 0..5 {
+                tx.send(DropCounter(Arc::new(())));
+            }
+
+            // Drop both ends - remaining items should be dropped
+            drop(tx);
+            drop(rx);
+        }
+
+        // All 5 items should have been dropped
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 5);
+    }
 }
 
 #[cfg(all(test, feature = "loom"))]
@@ -137,7 +172,7 @@ mod loom_test {
     #[test]
     fn basic_loom() {
         loom::model(|| {
-            let (mut tx, mut rx) = channel(NonZeroUsize::new(4).unwrap());
+            let (mut tx, mut rx) = channel::<usize>(NonZeroUsize::new(4).unwrap());
             let counts = 7;
 
             thread::spawn(move || {

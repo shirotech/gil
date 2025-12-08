@@ -1,21 +1,17 @@
-use crate::{
-    atomic::Ordering,
-    hint,
-    queue::QueuePtr,
-};
+use crate::{atomic::Ordering, hint, queue::QueuePtr};
 
 /// The consumer end of the queue.
 ///
 /// This struct is `Send` but not `Sync`. It can be moved to another thread, but cannot be shared
 /// across threads.
-pub struct Receiver {
-    ptr: QueuePtr,
+pub struct Receiver<T> {
+    ptr: QueuePtr<T>,
     local_tail: usize,
     mask: usize,
 }
 
-impl Receiver {
-    pub(crate) fn new(queue_ptr: QueuePtr, mask: usize) -> Self {
+impl<T> Receiver<T> {
+    pub(crate) fn new(queue_ptr: QueuePtr<T>, mask: usize) -> Self {
         Self {
             ptr: queue_ptr,
             local_tail: 0,
@@ -29,7 +25,7 @@ impl Receiver {
     ///
     /// * `Some(value)` if a value is available.
     /// * `None` if the queue is empty.
-    pub fn try_recv(&mut self) -> Option<usize> {
+    pub fn try_recv(&mut self) -> Option<T> {
         let current_head = self.load_head();
         let new_head = (current_head + 1) & self.mask;
 
@@ -52,7 +48,7 @@ impl Receiver {
     ///
     /// This method uses a spin loop to wait for available data in the queue.
     /// For a non-blocking alternative, use [`Receiver::try_recv`].
-    pub fn recv(&mut self) -> usize {
+    pub fn recv(&mut self) -> T {
         let current_head = self.load_head();
         let new_head = (current_head + 1) & self.mask;
 
@@ -73,7 +69,7 @@ impl Receiver {
     ///
     /// This method yields the current task if the queue is empty.
     #[cfg(feature = "async")]
-    pub async fn recv_async(&mut self) -> usize {
+    pub async fn recv_async(&mut self) -> T {
         use std::task::Poll;
 
         futures::future::poll_fn(|ctx| {
@@ -122,7 +118,7 @@ impl Receiver {
     ///
     /// A slice containing available items starting from the current head.
     /// Note that this might not represent *all* available items if the buffer wraps around.
-    pub fn read_buffer(&mut self) -> &[usize] {
+    pub fn read_buffer(&mut self) -> &[T] {
         let start = self.load_head();
 
         if start == self.local_tail {
@@ -178,4 +174,4 @@ impl Receiver {
     }
 }
 
-unsafe impl Send for Receiver {}
+unsafe impl<T: Send> Send for Receiver<T> {}
