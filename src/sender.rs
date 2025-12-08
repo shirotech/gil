@@ -9,6 +9,7 @@ use crate::{atomic::Ordering, hint, queue::QueuePtr};
 pub struct Sender<T> {
     ptr: QueuePtr<T>,
     local_head: usize,
+    local_tail: usize,
     mask: usize,
 }
 
@@ -17,6 +18,7 @@ impl<T> Sender<T> {
         Self {
             ptr: queue_ptr,
             local_head: 0,
+            local_tail: 0,
             mask,
         }
     }
@@ -28,8 +30,7 @@ impl<T> Sender<T> {
     /// * `true` if the value was successfully sent.
     /// * `false` if the queue is full.
     pub fn try_send(&mut self, value: T) -> Result<(), T> {
-        let current_tail = self.load_tail();
-        let new_tail = (current_tail + 1) & self.mask;
+        let new_tail = (self.local_tail + 1) & self.mask;
 
         if new_tail == self.local_head {
             self.load_head();
@@ -38,8 +39,9 @@ impl<T> Sender<T> {
             }
         }
 
-        self.ptr.set(current_tail, value);
+        self.ptr.set(self.local_tail, value);
         self.store_tail(new_tail);
+        self.local_tail = new_tail;
 
         Ok(())
     }
@@ -49,16 +51,16 @@ impl<T> Sender<T> {
     /// This method uses a spin loop to wait for available space in the queue.
     /// For a non-blocking alternative, use [`Sender::try_send`].
     pub fn send(&mut self, value: T) {
-        let current_tail = self.load_tail();
-        let new_tail = (current_tail + 1) & self.mask;
+        let new_tail = (self.local_tail + 1) & self.mask;
 
         while new_tail == self.local_head {
             hint::spin_loop();
             self.load_head();
         }
 
-        self.ptr.set(current_tail, value);
+        self.ptr.set(self.local_tail, value);
         self.store_tail(new_tail);
+        self.local_tail = new_tail;
     }
 
     /// Sends a value into the queue asynchronously.
@@ -73,8 +75,7 @@ impl<T> Sender<T> {
         let mut value = Some(value);
 
         futures::future::poll_fn(|ctx| {
-            let current_tail = self.load_tail();
-            let new_tail = (current_tail + 1) & self.mask;
+            let new_tail = (self.local_tail + 1) & self.mask;
 
             if new_tail == self.local_head {
                 self.load_head();
@@ -93,8 +94,9 @@ impl<T> Sender<T> {
                 }
             }
 
-            self.ptr.set(current_tail, value.take().unwrap());
+            self.ptr.set(self.local_tail, value.take().unwrap());
             self.store_tail(new_tail);
+            self.local_tail = new_tail;
 
             if self.ptr.receiver_sleeping().load(Ordering::SeqCst) {
                 self.ptr.receiver_sleeping().store(false, Ordering::Relaxed);
@@ -124,7 +126,7 @@ impl<T> Sender<T> {
     /// [`copy_nonoverlapping`](std::ptr::copy_nonoverlapping) if you want fast copying between
     /// this and your own data.
     pub fn write_buffer(&mut self) -> &mut [MaybeUninit<T>] {
-        let start = self.load_tail();
+        let start = self.local_tail;
         let next = (start + 1) & self.mask;
 
         if next == self.local_head {
@@ -155,13 +157,9 @@ impl<T> Sender<T> {
     #[inline(always)]
     pub unsafe fn commit(&mut self, len: usize) {
         // the len can be just right at the edge of buffer, so we need to wrap just in case
-        let new_tail = (self.load_tail() + len) & self.mask;
+        let new_tail = (self.local_tail + len) & self.mask;
         self.store_tail(new_tail);
-    }
-
-    #[inline(always)]
-    fn load_tail(&self) -> usize {
-        self.ptr.tail().load(Ordering::Relaxed)
+        self.local_tail = new_tail;
     }
 
     #[inline(always)]
