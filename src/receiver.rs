@@ -76,8 +76,8 @@ impl<T> Receiver<T> {
     pub async fn recv_async(&mut self) -> T {
         use std::task::Poll;
 
-        futures::future::poll_fn(|ctx| {
-            if self.local_head == self.local_tail {
+        if self.local_head == self.local_tail {
+            futures::future::poll_fn(|ctx| {
                 self.load_tail();
                 if self.local_head == self.local_tail {
                     self.ptr.register_receiver_waker(ctx.waker());
@@ -92,22 +92,23 @@ impl<T> Receiver<T> {
                     // not sleeping anymore
                     self.ptr.receiver_sleeping().store(false, Ordering::Relaxed);
                 }
-            }
+                Poll::Ready(())
+            })
+            .await;
+        }
 
-            // SAFETY: head != tail which means queue is not empty and head has valid initialised
-            //         value
-            let ret = unsafe { self.ptr.get(self.local_head) };
-            let new_head = self.next_head();
-            self.store_head(new_head);
-            self.local_head = new_head;
+        // SAFETY: head != tail which means queue is not empty and head has valid initialised
+        //         value
+        let ret = unsafe { self.ptr.get(self.local_head) };
+        let new_head = self.next_head();
+        self.store_head(new_head);
+        self.local_head = new_head;
 
-            if self.ptr.sender_sleeping().load(Ordering::SeqCst) {
-                self.ptr.sender_sleeping().store(false, Ordering::Relaxed);
-                self.ptr.wake_sender();
-            }
-            Poll::Ready(ret)
-        })
-        .await
+        if self.ptr.sender_sleeping().load(Ordering::SeqCst) {
+            self.ptr.wake_sender();
+        }
+
+        ret
     }
 
     /// Returns a slice to the available read buffer in the queue.

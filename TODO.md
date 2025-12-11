@@ -1,3 +1,5 @@
 # TODO
 
-- compare the generated assembly to see why it is loosing out to bounded-spsc-queue's implementation for simple case in benchmarks
+- use `#[cold]` and other possible `std::hint` stuff
+- more type of queues (mpsc, mpmc with lagging senders, mpmc without lagging senders etc.)
+- 

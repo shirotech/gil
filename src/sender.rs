@@ -74,14 +74,10 @@ impl<T> Sender<T> {
     pub async fn send_async(&mut self, value: T) {
         use std::task::Poll;
 
-        // We need to store the value in an Option so we can move it into the queue
-        // when space becomes available
-        let mut value = Some(value);
+        let new_tail = self.next_tail();
 
-        futures::future::poll_fn(|ctx| {
-            let new_tail = self.next_tail();
-
-            if new_tail == self.local_head {
+        if new_tail == self.local_head {
+            futures::future::poll_fn(|ctx| {
                 self.load_head();
                 if new_tail == self.local_head {
                     self.ptr.register_sender_waker(ctx.waker());
@@ -96,19 +92,19 @@ impl<T> Sender<T> {
                     // not sleeping anymore
                     self.ptr.sender_sleeping().store(false, Ordering::Relaxed);
                 }
-            }
+                Poll::Ready(())
+            })
+            .await;
+        }
 
-            self.ptr.set(self.local_tail, value.take().unwrap());
-            self.store_tail(new_tail);
-            self.local_tail = new_tail;
+        let new_tail = self.next_tail();
+        self.ptr.set(self.local_tail, value);
+        self.store_tail(new_tail);
+        self.local_tail = new_tail;
 
-            if self.ptr.receiver_sleeping().load(Ordering::SeqCst) {
-                self.ptr.receiver_sleeping().store(false, Ordering::Relaxed);
-                self.ptr.wake_receiver();
-            }
-            Poll::Ready(())
-        })
-        .await
+        if self.ptr.receiver_sleeping().load(Ordering::SeqCst) {
+            self.ptr.wake_receiver();
+        }
     }
 
     /// Returns a mutable slice to the available write buffer in the queue.
