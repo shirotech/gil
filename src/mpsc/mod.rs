@@ -45,4 +45,24 @@ mod test {
             assert_eq!(sum, (ITER * (ITER - 1)) / 2 * THREADS);
         });
     }
+
+    #[test]
+    fn test_valid_try_sends() {
+        let (mut tx, mut rx) = channel::<usize>(NonZeroUsize::new(4).unwrap());
+        for _ in 0..4 {
+            assert!(rx.try_recv().is_none());
+        }
+        for i in 0..4 {
+            tx.try_send(i).unwrap();
+        }
+        assert!(tx.try_send(5).is_err());
+
+        for i in 0..4 {
+            assert_eq!(rx.try_recv(), Some(i));
+        }
+        assert!(rx.try_recv().is_none());
+        for i in 0..4 {
+            tx.try_send(i).unwrap();
+        }
+    }
 }

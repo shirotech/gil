@@ -29,7 +29,11 @@ name = "spsc_async_test"
 required-features = ["async"]
 
 [[bench]]
-name = "benchmark"
+name = "spsc_benchmark"
+harness = false
+
+[[bench]]
+name = "mpsc_benchmark"
 harness = false
 
 [dev-dependencies]
