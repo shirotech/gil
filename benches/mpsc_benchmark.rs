@@ -28,7 +28,7 @@ impl Payload1024 {
 fn make_group<'a>(c: &'a mut Criterion, name: &str) -> BenchmarkGroup<'a, WallTime> {
     let mut group = c.benchmark_group(name);
     group.measurement_time(Duration::from_secs(3));
-    group.sample_size(50);
+    group.sample_size(10);
     group.warm_up_time(Duration::from_secs(1));
 
     group
@@ -304,12 +304,10 @@ fn benchmark(c: &mut Criterion) {
 }
 
 fn large_queue_benchmark(c: &mut Criterion) {
-    let mut group = c.benchmark_group("large_queue");
-    group.measurement_time(Duration::from_secs(5));
-    group.warm_up_time(Duration::from_secs(1));
+    let mut group = make_group(c, "large_queue");
 
     const ITERS: usize = 5_000_000;
-    const SENDER_COUNTS: [usize; 4] = [1, 8, 128, 1024];
+    const SENDER_COUNTS: [usize; 2] = [2, 8];
 
     group.throughput(Throughput::Elements(ITERS as u64));
 

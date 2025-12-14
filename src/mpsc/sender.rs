@@ -1,9 +1,10 @@
-use crate::{atomic::Ordering, hint, mpsc::queue::QueuePtr};
+use std::cmp::Ordering as Cmp;
+
+use crate::{atomic::Ordering, hint, mpsc::queue::QueuePtr, thread};
 
 #[derive(Clone)]
 pub struct Sender<T> {
     ptr: QueuePtr<T>,
-    local_reserved: usize,
     local_tail: usize,
 }
 
@@ -11,67 +12,77 @@ impl<T> Sender<T> {
     pub(crate) fn new(queue_ptr: QueuePtr<T>) -> Self {
         Self {
             ptr: queue_ptr,
-            local_reserved: 0,
             local_tail: 0,
         }
     }
 
     pub fn send(&mut self, value: T) {
-        let old_tail = self.ptr.reserved().fetch_add(1, Ordering::AcqRel);
+        // fetch_add means we are the only ones who can access the cell at this idx
+        let tail = self.ptr.tail().fetch_add(1, Ordering::Relaxed);
+        let next = tail.wrapping_add(1);
 
-        while old_tail >= self.ptr.head().load(Ordering::Acquire) + self.ptr.size {
-            hint::spin_loop();
+        let cell = self.ptr.at(tail);
+        let mut spin_count = 0;
+        while cell.epoch().load(Ordering::Acquire) != tail {
+            if spin_count < 16 {
+                hint::spin_loop();
+                spin_count += 1;
+            } else {
+                spin_count = 0;
+                thread::yield_now();
+            }
         }
 
-        unsafe { self.ptr.set(old_tail, value) };
-
-        while old_tail > self.ptr.tail().load(Ordering::Relaxed) {
-            crate::thread::yield_now();
-        }
-        self.ptr.tail().fetch_add(1, Ordering::Relaxed);
+        cell.set(value);
+        cell.epoch().store(next, Ordering::Release);
+        self.local_tail = next;
     }
 
     pub fn try_send(&mut self, value: T) -> Result<(), T> {
-        let mut new_tail = self.local_reserved + 1;
+        let mut spin_count = 0;
 
-        loop {
-            if new_tail > self.ptr.head().load(Ordering::Acquire) + self.ptr.size {
-                return Err(value);
+        let cell = loop {
+            let cell = self.ptr.at(self.local_tail);
+            let epoch = cell.epoch().load(Ordering::Acquire);
+
+            match epoch.cmp(&self.local_tail) {
+                // consumer hasn't read the value
+                Cmp::Less => return Err(value),
+
+                // consumer has read the value, cell is free
+                Cmp::Equal => {
+                    let next = self.local_tail.wrapping_add(1);
+                    match self.ptr.tail().compare_exchange_weak(
+                        self.local_tail,
+                        next,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => {
+                            self.local_tail = next;
+                            break cell;
+                        }
+                        Err(cur_tail) => self.local_tail = cur_tail,
+                    }
+                }
+
+                // some other producer has written to this cell before us
+                Cmp::Greater => self.local_tail = self.ptr.tail().load(Ordering::Relaxed),
+            };
+
+            if spin_count < 16 {
+                hint::spin_loop();
+                spin_count += 1;
+            } else {
+                spin_count = 0;
+                thread::yield_now();
             }
+        };
 
-            match self.ptr.reserved().compare_exchange_weak(
-                self.local_reserved,
-                new_tail,
-                Ordering::AcqRel,
-                Ordering::Relaxed,
-            ) {
-                Err(cur_reserved) => self.local_reserved = cur_reserved,
-                Ok(_) => break,
-            }
+        cell.set(value);
+        cell.epoch().store(self.local_tail, Ordering::Release);
 
-            new_tail = self.local_reserved + 1;
-
-            hint::spin_loop();
-        }
-
-        unsafe { self.ptr.set(self.local_reserved, value) };
-        loop {
-            match self.ptr.tail().compare_exchange_weak(
-                new_tail - 1,
-                new_tail,
-                Ordering::AcqRel,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(cur_tail) => self.local_tail = cur_tail,
-            }
-            hint::spin_loop();
-        }
-
-        self.local_reserved = new_tail;
-        self.local_tail = new_tail;
-
-        Ok(())
+        return Ok(());
     }
 }
 
