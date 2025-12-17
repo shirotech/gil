@@ -5,7 +5,7 @@ fn main() {
     let (tx, mut rx) = channel(NonZeroUsize::new(4096).unwrap());
 
     const SENDERS: usize = 8;
-    const MESSAGES: usize = 500_000;
+    const MESSAGES: usize = 1_000_000;
 
     let start = SystemTime::now();
 
