@@ -32,13 +32,52 @@ impl<T> Receiver<T> {
 
         let ret = unsafe { cell.get() };
         cell.epoch()
-            .store(head + self.ptr.capacity, Ordering::Release);
+            .store(head.wrapping_add(self.ptr.capacity), Ordering::Release);
 
         ret
     }
 
     pub fn try_recv(&mut self) -> Option<T> {
-        todo!()
+        use std::cmp::Ordering as Cmp;
+        let mut spin_count = 0;
+
+        loop {
+            let cell = self.ptr.at(self.local_head);
+            let epoch = cell.epoch().load(Ordering::Acquire);
+            let next_epoch = self.local_head.wrapping_add(1);
+
+            match epoch.cmp(&next_epoch) {
+                Cmp::Less => return None,
+                Cmp::Equal => {
+                    match self.ptr.head().compare_exchange_weak(
+                        self.local_head,
+                        next_epoch,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => {
+                            let ret = unsafe { cell.get() };
+                            cell.epoch().store(
+                                self.local_head.wrapping_add(self.ptr.capacity),
+                                Ordering::Release,
+                            );
+                            self.local_head = next_epoch;
+                            return Some(ret);
+                        }
+                        Err(cur_head) => self.local_head = cur_head,
+                    }
+                }
+                Cmp::Greater => self.local_head = self.ptr.head().load(Ordering::Relaxed),
+            }
+
+            if spin_count < 16 {
+                crate::hint::spin_loop();
+                spin_count += 1;
+            } else {
+                spin_count = 0;
+                crate::thread::yield_now();
+            }
+        }
     }
 }
 

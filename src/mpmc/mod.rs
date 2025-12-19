@@ -89,6 +89,54 @@ mod test {
     }
 
     #[test]
+    fn multiple_senders_multiple_receivers_try() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        const SENDERS: usize = 4;
+        const RECEIVERS: usize = 4;
+        const MESSAGES: usize = 1000;
+
+        let (tx, rx) = channel(NonZeroUsize::new(128).unwrap());
+        let total_received = std::sync::Arc::new(AtomicUsize::new(0));
+        let total_sum = std::sync::Arc::new(AtomicUsize::new(0));
+
+        thread::scope(|s| {
+            for t in 0..SENDERS {
+                let mut tx = tx.clone();
+                s.spawn(move || {
+                    for i in 0..MESSAGES {
+                        while tx.try_send(t * MESSAGES + i).is_err() {
+                            std::thread::yield_now();
+                        }
+                    }
+                });
+            }
+
+            for _ in 0..RECEIVERS {
+                let mut rx = rx.clone();
+                let total_received = total_received.clone();
+                let total_sum = total_sum.clone();
+                s.spawn(move || {
+                    let mut count = 0;
+                    while count < (SENDERS * MESSAGES / RECEIVERS) {
+                        if let Some(val) = rx.try_recv() {
+                            total_received.fetch_add(1, Ordering::SeqCst);
+                            total_sum.fetch_add(val, Ordering::SeqCst);
+                            count += 1;
+                        } else {
+                            std::thread::yield_now();
+                        }
+                    }
+                });
+            }
+        });
+
+        assert_eq!(total_received.load(Ordering::SeqCst), SENDERS * MESSAGES);
+        let n = SENDERS * MESSAGES;
+        let expected_sum = n * (n - 1) / 2;
+        assert_eq!(total_sum.load(Ordering::SeqCst), expected_sum);
+    }
+
+    #[test]
     fn test_valid_try_sends() {
         let (mut tx, mut rx) = channel::<usize>(NonZeroUsize::new(4).unwrap());
         for _ in 0..4 {
