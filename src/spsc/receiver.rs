@@ -36,7 +36,7 @@ impl<T> Receiver<T> {
         // SAFETY: head != tail which means queue is not empty and head has valid initialised
         //         value
         let ret = unsafe { self.ptr.get(self.local_head) };
-        let new_head = self.local_head + 1;
+        let new_head = self.local_head.wrapping_add(1);
         self.store_head(new_head);
         self.local_head = new_head;
 
@@ -56,7 +56,7 @@ impl<T> Receiver<T> {
         // SAFETY: head != tail which means queue is not empty and head has valid initialised
         //         value
         let ret = unsafe { self.ptr.get(self.local_head) };
-        let new_head = self.local_head + 1;
+        let new_head = self.local_head.wrapping_add(1);
         self.store_head(new_head);
         self.local_head = new_head;
 
@@ -94,7 +94,7 @@ impl<T> Receiver<T> {
         // SAFETY: head != tail which means queue is not empty and head has valid initialised
         //         value
         let ret = unsafe { self.ptr.get(self.local_head) };
-        let new_head = self.local_head + 1;
+        let new_head = self.local_head.wrapping_add(1);
         self.store_head(new_head);
         self.local_head = new_head;
 
@@ -117,11 +117,11 @@ impl<T> Receiver<T> {
     /// A slice containing available items starting from the current head.
     /// Note that this might not represent *all* available items if the buffer wraps around.
     pub fn read_buffer(&mut self) -> &[T] {
-        let mut available = self.local_tail - self.local_head;
+        let mut available = self.local_tail.wrapping_sub(self.local_head);
 
         if available == 0 {
             self.load_tail();
-            available = self.local_tail - self.local_head;
+            available = self.local_tail.wrapping_sub(self.local_head);
         }
 
         let start = self.local_head & self.ptr.mask;
@@ -149,7 +149,7 @@ impl<T> Receiver<T> {
         {
             let start = self.local_head & self.ptr.mask;
             let contiguous = self.ptr.capacity - start;
-            let available = contiguous.min(self.local_tail - self.local_head);
+            let available = contiguous.min(self.local_tail.wrapping_sub(self.local_head));
             assert!(
                 len <= available,
                 "advancing ({len}) more than available space ({available})"
@@ -157,7 +157,7 @@ impl<T> Receiver<T> {
         }
 
         // the len can be just right at the edge of buffer, so we need to wrap just in case
-        let new_head = self.local_head + len;
+        let new_head = self.local_head.wrapping_add(len);
         self.store_head(new_head);
         self.local_head = new_head;
     }

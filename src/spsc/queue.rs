@@ -208,9 +208,11 @@ impl<T> Drop for QueuePtr<T> {
 
             let head = self.head().load(Ordering::Relaxed);
             let tail = self.tail().load(Ordering::Relaxed);
+            let len = tail.wrapping_sub(head);
 
             if std::mem::needs_drop::<T>() {
-                for idx in head..tail {
+                for i in 0..len {
+                    let idx = head.wrapping_add(i);
                     unsafe {
                         std::ptr::drop_in_place(self.at(idx).as_ptr());
                     }

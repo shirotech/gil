@@ -113,7 +113,8 @@ impl<T> Drop for QueuePtr<T> {
             let head = self.head().load(Ordering::Relaxed);
 
             if std::mem::needs_drop::<T>() {
-                for idx in head..head.wrapping_add(self.capacity) {
+                for i in 0..self.capacity {
+                    let idx = head.wrapping_add(i);
                     let cell = self.at(idx);
                     let epoch = cell.epoch().load(Ordering::Relaxed);
                     if epoch > idx && (epoch & self.mask) == (idx & self.mask) {

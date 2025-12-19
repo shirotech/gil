@@ -131,7 +131,8 @@ impl<T> Drop for QueuePtr<T> {
             let tail = self.tail().load(Ordering::Relaxed);
 
             if std::mem::needs_drop::<T>() {
-                for idx in tail.saturating_sub(self.capacity)..tail {
+                for i in 1..=self.capacity {
+                    let idx = tail.wrapping_sub(i);
                     let cell = self.at(idx);
                     if cell.epoch().load(Ordering::Relaxed) == idx.wrapping_add(1) {
                         unsafe { cell.drop_in_place() };

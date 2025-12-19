@@ -28,7 +28,7 @@ impl<T> Sender<T> {
     /// * `true` if the value was successfully sent.
     /// * `false` if the queue is full.
     pub fn try_send(&mut self, value: T) -> Result<(), T> {
-        let new_tail = self.local_tail + 1;
+        let new_tail = self.local_tail.wrapping_add(1);
 
         if new_tail > self.max_tail() {
             self.load_head();
@@ -49,7 +49,7 @@ impl<T> Sender<T> {
     /// This method uses a spin loop to wait for available space in the queue.
     /// For a non-blocking alternative, use [`Sender::try_send`].
     pub fn send(&mut self, value: T) {
-        let new_tail = self.local_tail + 1;
+        let new_tail = self.local_tail.wrapping_add(1);
 
         while new_tail > self.max_tail() {
             hint::spin_loop();
@@ -68,7 +68,7 @@ impl<T> Sender<T> {
     pub async fn send_async(&mut self, value: T) {
         use std::task::Poll;
 
-        let new_tail = self.local_tail + 1;
+        let new_tail = self.local_tail.wrapping_add(1);
 
         if new_tail > self.max_tail() {
             futures::future::poll_fn(|ctx| {
@@ -119,11 +119,11 @@ impl<T> Sender<T> {
     /// [`copy_nonoverlapping`](std::ptr::copy_nonoverlapping) if you want fast copying between
     /// this and your own data.
     pub fn write_buffer(&mut self) -> &mut [MaybeUninit<T>] {
-        let mut available = self.ptr.size - (self.local_tail - self.local_head);
+        let mut available = self.ptr.size - self.local_tail.wrapping_sub(self.local_head);
 
         if available == 0 {
             self.load_head();
-            available = self.ptr.size - (self.local_tail - self.local_head);
+            available = self.ptr.size - self.local_tail.wrapping_sub(self.local_head);
         }
 
         let start = self.local_tail & self.ptr.mask;
@@ -149,7 +149,7 @@ impl<T> Sender<T> {
         {
             let start = self.local_tail & self.ptr.mask;
             let contiguous = self.ptr.capacity - start;
-            let available = contiguous.min(self.ptr.size - (self.local_tail - self.local_head));
+            let available = contiguous.min(self.ptr.size - self.local_tail.wrapping_sub(self.local_head));
             assert!(
                 len <= available,
                 "advancing ({len}) more than available space ({available})"
@@ -157,14 +157,14 @@ impl<T> Sender<T> {
         }
 
         // the len can be just right at the edge of buffer, so we need to wrap just in case
-        let new_tail = self.local_tail + len;
+        let new_tail = self.local_tail.wrapping_add(len);
         self.store_tail(new_tail);
         self.local_tail = new_tail;
     }
 
     #[inline(always)]
     fn max_tail(&self) -> usize {
-        self.local_head + self.ptr.size
+        self.local_head.wrapping_add(self.ptr.size)
     }
 
     #[inline(always)]
