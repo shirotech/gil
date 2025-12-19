@@ -36,9 +36,10 @@ impl<T> Receiver<T> {
         }
 
         let ret = unsafe { cell.get() };
-        cell.epoch()
-            .store(self.local_head.wrapping_add(self.ptr.capacity), Ordering::Release);
-
+        cell.epoch().store(
+            self.local_head.wrapping_add(self.ptr.capacity),
+            Ordering::Release,
+        );
 
         self.local_head = next_head;
 
@@ -60,9 +61,10 @@ impl<T> Receiver<T> {
         }
 
         let ret = unsafe { cell.get() };
-        cell.epoch()
-            .store(self.local_head.wrapping_add(self.ptr.capacity), Ordering::Release);
-
+        cell.epoch().store(
+            self.local_head.wrapping_add(self.ptr.capacity),
+            Ordering::Release,
+        );
 
         self.local_head = next_head;
 

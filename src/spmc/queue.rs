@@ -117,7 +117,7 @@ impl<T> Drop for QueuePtr<T> {
                     let cell = self.at(idx);
                     let epoch = cell.epoch().load(Ordering::Relaxed);
                     if epoch > idx && (epoch & self.mask) == (idx & self.mask) {
-                         unsafe { cell.drop_in_place() };
+                        unsafe { cell.drop_in_place() };
                     }
                 }
             }
