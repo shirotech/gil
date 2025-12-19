@@ -45,7 +45,7 @@ name = "spmc_benchmark"
 harness = false
 
 [dev-dependencies]
-criterion = { version = "0.8.0", features = [
+criterion = { version = "0.8.1", features = [
     "async",
     "async_futures",
     "real_blackbox",
