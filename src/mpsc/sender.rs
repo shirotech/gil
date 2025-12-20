@@ -27,7 +27,7 @@ impl<T> Sender<T> {
         let next = tail.wrapping_add(1);
 
         let cell = self.ptr.at(tail);
-        let mut backoff = crate::Backoff::new();
+        let mut backoff = crate::Backoff::with_spin_count(128);
         while cell.epoch().load(Ordering::Acquire) != tail {
             backoff.backoff();
         }

@@ -3,22 +3,7 @@ pub struct Backoff {
     current: u32,
 }
 
-impl Default for Backoff {
-    #[inline(always)]
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Backoff {
-    #[inline(always)]
-    pub fn new() -> Self {
-        Self {
-            spin_count: 128,
-            current: 0,
-        }
-    }
-
     #[inline(always)]
     pub fn with_spin_count(spin_count: u32) -> Self {
         Self {

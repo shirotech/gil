@@ -27,7 +27,7 @@ impl<T> Receiver<T> {
         self.local_head = next;
 
         let cell = self.ptr.at(head);
-        let mut backoff = crate::Backoff::new();
+        let mut backoff = crate::Backoff::with_spin_count(128);
         while cell.epoch().load(Ordering::Acquire) != next {
             backoff.backoff();
         }

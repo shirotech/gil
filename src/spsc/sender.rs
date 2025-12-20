@@ -51,7 +51,7 @@ impl<T> Sender<T> {
     pub fn send(&mut self, value: T) {
         let new_tail = self.local_tail.wrapping_add(1);
 
-        let mut backoff = crate::Backoff::new();
+        let mut backoff = crate::Backoff::with_spin_count(128);
         while new_tail > self.max_tail() {
             backoff.backoff();
             self.load_head();

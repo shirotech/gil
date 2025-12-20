@@ -48,7 +48,7 @@ impl<T> Receiver<T> {
     /// This method uses a spin loop to wait for available data in the queue.
     /// For a non-blocking alternative, use [`Receiver::try_recv`].
     pub fn recv(&mut self) -> T {
-        let mut backoff = crate::Backoff::new();
+        let mut backoff = crate::Backoff::with_spin_count(128);
         while self.local_head == self.local_tail {
             backoff.backoff();
             self.load_tail();

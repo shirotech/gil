@@ -15,7 +15,7 @@ impl<T> Sender<T> {
 
     pub fn send(&mut self, value: T) {
         let cell = self.ptr.at(self.local_tail);
-        let mut backoff = crate::Backoff::new();
+        let mut backoff = crate::Backoff::with_spin_count(128);
         while cell.epoch().load(Ordering::Acquire) != self.local_tail {
             backoff.backoff();
         }
