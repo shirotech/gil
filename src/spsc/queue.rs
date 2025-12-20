@@ -153,6 +153,7 @@ impl<T> QueuePtr<T> {
     /// # Safety
     /// Modifying the reference count might lead to use-after-free bug, so safety requires that rc
     /// is same as the number of pointers to Queue at any moment.
+    #[expect(dead_code)]
     #[inline(always)]
     pub(crate) unsafe fn rc(&self) -> &AtomicUsize {
         unsafe { _field!(Queue, self.ptr, rc, AtomicUsize).as_ref() }

@@ -83,7 +83,7 @@ impl<T> Sender<T> {
         cell.set(value);
         cell.epoch().store(self.local_tail, Ordering::Release);
 
-        return Ok(());
+        Ok(())
     }
 }
 
