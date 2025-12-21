@@ -8,6 +8,20 @@ mod sender;
 pub use receiver::{ReadGuard, Receiver};
 pub use sender::Sender;
 
+/// Creates a new sharded multi-producer multi-consumer channel.
+///
+/// The channel is composed of multiple shards, each being a single-producer single-consumer queue.
+/// This structure allows for high throughput and reduced contention when multiple threads are
+/// sending or receiving concurrently.
+///
+/// # Arguments
+///
+/// * `max_shards` - The maximum number of shards to create. This must be a power of two.
+/// * `capacity_per_shard` - The capacity of each individual shard.
+///
+/// # Returns
+///
+/// A tuple containing a [`Sender`] and a [`Receiver`].
 pub fn channel<T>(
     max_shards: NonZeroUsize,
     capacity_per_shard: NonZeroUsize,

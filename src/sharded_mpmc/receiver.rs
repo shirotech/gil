@@ -9,6 +9,9 @@ use crate::{
 
 type Lock = Padded<AtomicBool>;
 
+/// A guard that provides read access to a batch of elements from the channel.
+///
+/// When the guard is dropped, the elements are marked as consumed in the channel.
 pub struct ReadGuard<'a, T> {
     receiver: &'a mut Receiver<T>,
     data: *const [T],
@@ -33,12 +36,18 @@ impl<'a, T> Drop for ReadGuard<'a, T> {
 }
 
 impl<'a, T> ReadGuard<'a, T> {
+    /// Marks `len` elements as consumed.
+    ///
+    /// These elements will be removed from the channel when the guard is dropped.
     pub fn advance(&mut self, len: usize) {
         debug_assert!(self.consumed + len <= self.len(), "advancing beyond buffer length");
         self.consumed += len;
     }
 }
 
+/// The receiving half of a sharded MPMC channel.
+///
+/// The receiver attempts to read from shards in a round-robin fashion.
 pub struct Receiver<T> {
     receivers: Box<[spsc::Receiver<T>]>,
     locks: NonNull<Lock>,
@@ -75,6 +84,9 @@ impl<T> Receiver<T> {
         }
     }
 
+    /// Attempts to clone the receiver.
+    ///
+    /// Returns `Some(Receiver)` if there is an available slot for a new receiver, otherwise returns `None`.
     pub fn clone(&self) -> Option<Self> {
         let num_receivers_ref = unsafe { self.num_receivers.as_ref() };
         if num_receivers_ref.fetch_add(1, Ordering::AcqRel) == self.max_shards {
@@ -96,6 +108,9 @@ impl<T> Receiver<T> {
         })
     }
 
+    /// Receives a value from the channel.
+    ///
+    /// This method will block (spin) until a value is available in any of the shards.
     pub fn recv(&mut self) -> T {
         let mut backoff = Backoff::with_spin_count(128);
         loop {
@@ -106,6 +121,9 @@ impl<T> Receiver<T> {
         }
     }
 
+    /// Attempts to receive a value from the channel without blocking.
+    ///
+    /// Returns `Some(value)` if a value was received, or `None` if all shards are empty or locked.
     pub fn try_recv(&mut self) -> Option<T> {
         let start = self.next_shard;
         loop {
@@ -133,6 +151,9 @@ impl<T> Receiver<T> {
         }
     }
 
+    /// Returns a [`ReadGuard`] providing read access to a batch of elements from the channel.
+    ///
+    /// If no elements are available, an empty [`ReadGuard`] is returned.
     pub fn read_buffer(&mut self) -> ReadGuard<'_, T> {
         let start = self.next_shard;
         loop {

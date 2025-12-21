@@ -5,6 +5,20 @@ use crate::spsc;
 mod receiver;
 mod sender;
 
+/// Creates a new sharded multi-producer single-consumer channel.
+///
+/// The channel is composed of multiple shards, each being a single-producer single-consumer queue.
+/// This structure allows for high throughput when multiple threads are sending concurrently,
+/// as they will each use a different shard.
+///
+/// # Arguments
+///
+/// * `max_shards` - The maximum number of shards to create. This must be a power of two.
+/// * `capacity_per_shard` - The capacity of each individual shard.
+///
+/// # Returns
+///
+/// A tuple containing a [`Sender`] and a [`Receiver`].
 pub fn channel<T>(
     max_shards: NonZeroUsize,
     capacity_per_shard: NonZeroUsize,

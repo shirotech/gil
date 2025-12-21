@@ -94,6 +94,33 @@ for handle in handles {
 }
 ```
 
+### Sharded MPMC/MPSC
+
+For high-throughput scenarios where multiple threads access the queue concurrently, sharded versions can significantly reduce contention. These use multiple SPSC queues internally and distribute load across them.
+
+**Note:** The sharded channels use a "bounded" number of shards. This means the number of concurrent senders (and receivers for MPMC) is limited to the number of shards. Cloning a sender/receiver will fail (return `None`) if all shards are occupied.
+
+```rust
+use std::thread;
+use std::num::NonZeroUsize;
+use gil::sharded_mpmc::channel;
+
+let max_shards = NonZeroUsize::new(8).unwrap();
+let capacity_per_shard = NonZeroUsize::new(128).unwrap();
+let (tx, mut rx) = channel::<usize>(max_shards, capacity_per_shard);
+
+// Clone sender to use different shards
+// Note: This returns Option<Sender>, returning None if all shards are busy.
+if let Some(mut tx2) = tx.clone() {
+    thread::spawn(move || {
+        tx2.send(42);
+    });
+}
+
+let value = rx.recv();
+assert_eq!(value, 42);
+```
+
 ### Async Example
 
 To use async features, enable the `async` feature in your `Cargo.toml`.

@@ -2,6 +2,9 @@ use core::ptr::NonNull;
 
 use crate::{Backoff, spsc};
 
+/// The receiving half of a sharded MPSC channel.
+///
+/// The receiver attempts to read from shards in a round-robin fashion.
 pub struct Receiver<T> {
     receivers: Box<[spsc::Receiver<T>]>,
     max_shards: usize,
@@ -26,6 +29,9 @@ impl<T> Receiver<T> {
         }
     }
 
+    /// Receives a value from the channel.
+    ///
+    /// This method will block (spin) until a value is available in any of the shards.
     pub fn recv(&mut self) -> T {
         let mut backoff = Backoff::with_spin_count(128);
         loop {
@@ -36,6 +42,9 @@ impl<T> Receiver<T> {
         }
     }
 
+    /// Attempts to receive a value from the channel without blocking.
+    ///
+    /// Returns `Some(value)` if a value was received, or `None` if all shards are empty.
     pub fn try_recv(&mut self) -> Option<T> {
         let start = self.next_shard;
         loop {
@@ -56,6 +65,9 @@ impl<T> Receiver<T> {
         }
     }
 
+    /// Returns a slice of the internal read buffer from one of the shards.
+    ///
+    /// If no elements are available in any shard, an empty slice is returned.
     pub fn read_buffer(&mut self) -> &[T] {
         let start = self.next_shard;
         loop {
@@ -76,6 +88,12 @@ impl<T> Receiver<T> {
         }
     }
 
+    /// Advances the read pointer of the last shard accessed by `read_buffer`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `len` is less than or equal to the length of the slice
+    /// returned by the last call to `read_buffer`.
     pub unsafe fn advance(&mut self, len: usize) {
         let prev = if self.next_shard == 0 {
             self.max_shards - 1
