@@ -2,6 +2,7 @@ use core::ptr::{self, NonNull};
 
 use crate::{
     Backoff,
+    mpmc::sharded::ShardsPtr,
     padded::Padded,
     spsc,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -56,24 +57,18 @@ pub struct Receiver<T> {
     receivers: Box<[spsc::Receiver<T>]>,
     locks: NonNull<Lock>,
     alive_receivers: NonNull<AtomicUsize>,
-    alive_senders: NonNull<AtomicUsize>,
-    shards: NonNull<spsc::QueuePtr<T>>,
+    shards: ShardsPtr<T>,
     max_shards: usize,
     next_shard: usize,
 }
 
 impl<T> Receiver<T> {
-    pub(crate) fn new(
-        shards: NonNull<spsc::QueuePtr<T>>,
-        max_shards: usize,
-        alive_senders: NonNull<AtomicUsize>,
-        alive_receivers: NonNull<AtomicUsize>,
-    ) -> Self {
+    pub(super) fn new(shards: ShardsPtr<T>, max_shards: usize) -> Self {
         let mut locks = Box::<[Lock]>::new_uninit_slice(max_shards);
         let mut receivers = Box::new_uninit_slice(max_shards);
 
         for i in 0..max_shards {
-            let shard = unsafe { shards.add(i).as_ref() }.clone();
+            let shard = shards.clone_queue_ptr(i);
             receivers[i].write(spsc::Receiver::new(shard));
 
             locks[i].write(Padded::new(AtomicBool::new(false)));
@@ -81,15 +76,13 @@ impl<T> Receiver<T> {
 
         let locks = unsafe { NonNull::new_unchecked(Box::into_raw(locks.assume_init())) }.cast();
 
-        unsafe {
-            alive_receivers.as_ref().fetch_add(1, Ordering::AcqRel);
-        }
+        let alive_receivers_ptr = Box::into_raw(Box::new(AtomicUsize::new(1)));
+        let alive_receivers = unsafe { NonNull::new_unchecked(alive_receivers_ptr) };
 
         Self {
             receivers: unsafe { receivers.assume_init() },
             locks,
             alive_receivers,
-            alive_senders,
             shards,
             max_shards,
             next_shard: 0,
@@ -114,8 +107,7 @@ impl<T> Receiver<T> {
         Some(Self {
             receivers: unsafe { receivers.assume_init() },
             alive_receivers: self.alive_receivers,
-            alive_senders: self.alive_senders,
-            shards: self.shards,
+            shards: self.shards.clone(),
             locks: self.locks,
             max_shards: self.max_shards,
             next_shard: 0,
@@ -241,19 +233,10 @@ impl<T> Receiver<T> {
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
         unsafe {
-            let num_receivers_ref = self.alive_receivers.as_ref();
-            if num_receivers_ref.fetch_sub(1, Ordering::AcqRel) == 1 {
+            if self.alive_receivers.as_ref().fetch_sub(1, Ordering::AcqRel) == 1 {
                 let slice_ptr = ptr::slice_from_raw_parts_mut(self.locks.as_ptr(), self.max_shards);
                 _ = Box::from_raw(slice_ptr);
-
-                if self.alive_senders.as_ref().load(Ordering::Acquire) == 0 {
-                    _ = Box::from_raw(self.alive_senders.as_ptr());
-                    _ = Box::from_raw(self.alive_receivers.as_ptr());
-                    _ = Box::from_raw(ptr::slice_from_raw_parts_mut(
-                        self.shards.as_ptr(),
-                        self.max_shards,
-                    ));
-                }
+                _ = Box::from_raw(self.alive_receivers.as_ptr());
             }
         }
     }

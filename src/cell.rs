@@ -1,7 +1,4 @@
-use std::{
-    mem::{MaybeUninit, offset_of},
-    ptr::NonNull,
-};
+use std::{mem::MaybeUninit, ptr::NonNull};
 
 use crate::atomic::AtomicUsize;
 

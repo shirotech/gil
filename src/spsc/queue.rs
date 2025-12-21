@@ -2,7 +2,7 @@
 use std::task::Waker;
 use std::{
     marker::PhantomData,
-    mem::{align_of, offset_of, size_of},
+    mem::{align_of, size_of},
     num::NonZeroUsize,
     ptr::NonNull,
 };

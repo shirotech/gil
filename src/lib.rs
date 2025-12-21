@@ -19,11 +19,11 @@ pub(crate) use loom::{
 #[allow(unused_macros)]
 macro_rules! _field {
     ($ty:ty, $ptr:expr, $($path:tt).+) => {
-        $ptr.byte_add(offset_of!($ty, $($path).+))
+        $ptr.byte_add(core::mem::offset_of!($ty, $($path).+))
     };
 
     ($ty:ty, $ptr:expr, $($path:tt).+, $field_ty:ty) => {
-        $ptr.byte_add(offset_of!($ty, $($path).+)).cast::<$field_ty>()
+        $ptr.byte_add(core::mem::offset_of!($ty, $($path).+)).cast::<$field_ty>()
     };
 }
 

@@ -1,10 +1,7 @@
-use core::{
-    mem::MaybeUninit,
-    num::NonZeroUsize,
-    ptr::{self, NonNull},
-};
+use core::{mem::MaybeUninit, num::NonZeroUsize, ptr::NonNull};
 
 use crate::{
+    mpmc::sharded::ShardsPtr,
     spsc,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -15,10 +12,9 @@ use crate::{
 /// instance to a different, unused shard.
 pub struct Sender<T> {
     inner: spsc::Sender<T>,
-    shards: NonNull<spsc::QueuePtr<T>>,
+    shards: ShardsPtr<T>,
     num_senders: NonNull<AtomicUsize>,
     alive_senders: NonNull<AtomicUsize>,
-    alive_receivers: NonNull<AtomicUsize>,
     max_shards: usize,
 }
 
@@ -29,41 +25,29 @@ impl<T> Sender<T> {
     pub fn try_clone(&self) -> Option<Self> {
         unsafe {
             Self::init(
-                self.shards,
+                self.shards.clone(),
                 self.max_shards,
                 self.num_senders,
                 self.alive_senders,
-                self.alive_receivers,
             )
         }
     }
 
-    pub(crate) fn new(
-        shards: NonNull<spsc::QueuePtr<T>>,
-        max_shards: NonZeroUsize,
-        alive_senders: NonNull<AtomicUsize>,
-        alive_receivers: NonNull<AtomicUsize>,
-    ) -> Self {
+    pub(super) fn new(shards: ShardsPtr<T>, max_shards: NonZeroUsize) -> Self {
         let num_senders_ptr = Box::into_raw(Box::new(AtomicUsize::new(0)));
+        let alive_senders_ptr = Box::into_raw(Box::new(AtomicUsize::new(0)));
         unsafe {
             let num_senders = NonNull::new_unchecked(num_senders_ptr);
-            Self::init(
-                shards,
-                max_shards.get(),
-                num_senders,
-                alive_senders,
-                alive_receivers,
-            )
-            .unwrap_unchecked()
+            let alive_senders = NonNull::new_unchecked(alive_senders_ptr);
+            Self::init(shards, max_shards.get(), num_senders, alive_senders).unwrap_unchecked()
         }
     }
 
-    pub(crate) unsafe fn init(
-        shards: NonNull<spsc::QueuePtr<T>>,
+    unsafe fn init(
+        shards: ShardsPtr<T>,
         max_shards: usize,
         num_senders: NonNull<AtomicUsize>,
         alive_senders: NonNull<AtomicUsize>,
-        alive_receivers: NonNull<AtomicUsize>,
     ) -> Option<Self> {
         let num_senders_ref = unsafe { num_senders.as_ref() };
         let next_shard = num_senders_ref.fetch_add(1, Ordering::Relaxed);
@@ -75,7 +59,7 @@ impl<T> Sender<T> {
         // AcqRel because can't have this before num_senders is done
         unsafe { alive_senders.as_ref() }.fetch_add(1, Ordering::AcqRel);
 
-        let shard_ptr = unsafe { shards.add(next_shard).as_ref() }.clone();
+        let shard_ptr = shards.clone_queue_ptr(next_shard);
         let inner = spsc::Sender::new(shard_ptr);
 
         Some(Self {
@@ -83,7 +67,6 @@ impl<T> Sender<T> {
             shards,
             num_senders,
             alive_senders,
-            alive_receivers,
             max_shards,
         })
     }
@@ -122,15 +105,7 @@ impl<T> Drop for Sender<T> {
         unsafe {
             if self.alive_senders.as_ref().fetch_sub(1, Ordering::AcqRel) == 1 {
                 _ = Box::from_raw(self.num_senders.as_ptr());
-
-                if self.alive_receivers.as_ref().load(Ordering::Acquire) == 0 {
-                    _ = Box::from_raw(self.alive_senders.as_ptr());
-                    _ = Box::from_raw(self.alive_receivers.as_ptr());
-                    _ = Box::from_raw(ptr::slice_from_raw_parts_mut(
-                        self.shards.as_ptr(),
-                        self.max_shards,
-                    ));
-                }
+                _ = Box::from_raw(self.alive_senders.as_ptr());
             }
         }
     }
