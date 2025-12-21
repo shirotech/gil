@@ -1,3 +1,22 @@
+//! Single-producer multi-consumer (SPMC) queue.
+//!
+//! This queue is an adaptation of Dmitry Vyukov's bounded MPMC queue, optimized for a single producer.
+//!
+//! # Performance
+//!
+//! **Improvements over standard implementations:**
+//! - **Single Allocation:** The queue header and buffer are allocated contiguously, improving cache locality.
+//! - **False Sharing Prevention:** Head and tail pointers are padded to prevent false sharing.
+//!
+//! # When to use
+//!
+//! Use this queue when you have a single thread distributing work to multiple consumer threads.
+//! It avoids the overhead of multi-producer synchronization.
+//!
+//! # Reference
+//!
+//! * Adapted from [Dmitry Vyukov's Bounded MPMC Queue](http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue)
+
 use std::num::NonZeroUsize;
 
 pub use self::{receiver::Receiver, sender::Sender};
@@ -8,7 +27,7 @@ mod sender;
 
 /// Creates a new single-producer multi-consumer (SPMC) queue.
 ///
-/// The queue has a fixed capacity and is lock-free.
+/// See the [module-level documentation](self) for more details on performance and usage.
 ///
 /// # Arguments
 ///

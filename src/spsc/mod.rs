@@ -1,3 +1,24 @@
+//! Single-producer single-consumer (SPSC) queue.
+//!
+//! This is the fastest queue variant, as it requires no atomic synchronization for the data buffer itself,
+//! only for the head and tail indices. It is inspired by the `ProducerConsumerQueue` in Facebook's Folly library.
+//!
+//! # Performance
+//!
+//! **Improvements over original inspiration:**
+//! - **Single Allocation:** The queue metadata (head/tail indices) and the data buffer are allocated
+//!   in a single contiguous memory block. This reduces cache misses by keeping related data close in memory.
+//! - **False Sharing Prevention:** The head and tail indices are explicitly padded to separate cache lines
+//!   to prevent false sharing between the producer and consumer cores.
+//!
+//! # When to use
+//!
+//! Use this queue for 1-to-1 thread communication. It offers the best possible throughput and latency.
+//!
+//! # Reference
+//!
+//! * [Facebook Folly ProducerConsumerQueue](https://github.com/facebook/folly/blob/main/folly/ProducerConsumerQueue.h)
+
 use std::num::NonZeroUsize;
 
 pub(crate) use self::queue::QueuePtr;
@@ -9,7 +30,7 @@ mod sender;
 
 /// Creates a new single-producer single-consumer (SPSC) queue.
 ///
-/// The queue has a fixed capacity and is lock-free.
+/// See the [module-level documentation](self) for more details on performance and usage.
 ///
 /// # Arguments
 ///

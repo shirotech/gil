@@ -1,3 +1,26 @@
+//! Multi-producer multi-consumer (MPMC) queue.
+//!
+//! This queue is based on the bounded MPMC queue algorithm by Dmitry Vyukov.
+//! It provides high throughput and low latency for concurrent message passing.
+//!
+//! # Performance
+//!
+//! **Improvements over original implementation:**
+//! - **Single Allocation:** The queue header (metadata) and the buffer are allocated as a single
+//!   contiguous memory block. This reduces memory fragmentation and improves cache locality.
+//! - **False Sharing Prevention:** Critical atomic counters (head and tail) are padded to match
+//!   cache line sizes, preventing false sharing between producers and consumers.
+//!
+//! # When to use
+//!
+//! Use this queue when you have multiple threads sending messages and multiple threads
+//! receiving messages. If you only have a single consumer, consider using [`mpsc::channel`](crate::mpsc::channel)
+//! for potentially better performance.
+//!
+//! # Reference
+//!
+//! * [Dmitry Vyukov's Bounded MPMC Queue](http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue)
+
 use std::num::NonZeroUsize;
 
 pub use self::{receiver::Receiver, sender::Sender};
@@ -9,7 +32,7 @@ pub mod sharded;
 
 /// Creates a new multi-producer multi-consumer (MPMC) queue.
 ///
-/// The queue has a fixed capacity and is lock-free.
+/// See the [module-level documentation](self) for more details on performance and usage.
 ///
 /// # Arguments
 ///

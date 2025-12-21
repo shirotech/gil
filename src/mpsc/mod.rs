@@ -1,3 +1,23 @@
+//! Multi-producer single-consumer (MPSC) queue.
+//!
+//! This queue is an adaptation of Dmitry Vyukov's bounded MPMC queue, optimized for a single consumer.
+//!
+//! # Performance
+//!
+//! **Improvements over standard implementations:**
+//! - **Single Allocation:** The queue header and buffer are allocated contiguously, improving cache locality.
+//! - **False Sharing Prevention:** Head and tail pointers are padded to prevent false sharing.
+//!
+//! # When to use
+//!
+//! Use this queue when you have multiple producer threads sending data to a single consumer thread.
+//! It typically outperforms a general-purpose MPMC queue in this scenario because the consumer
+//! does not need to contend with other consumers.
+//!
+//! # Reference
+//!
+//! * Adapted from [Dmitry Vyukov's Bounded MPMC Queue](http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue)
+
 use std::num::NonZeroUsize;
 
 pub use self::{receiver::Receiver, sender::Sender};
@@ -9,7 +29,7 @@ pub mod sharded;
 
 /// Creates a new multi-producer single-consumer (MPSC) queue.
 ///
-/// The queue has a fixed capacity and is lock-free.
+/// See the [module-level documentation](self) for more details on performance and usage.
 ///
 /// # Arguments
 ///

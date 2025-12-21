@@ -1,3 +1,24 @@
+//! Sharded multi-producer single-consumer channel.
+//!
+//! The channel is composed of multiple shards, each being a single-producer single-consumer (SPSC) queue.
+//! This structure allows for high throughput when multiple threads are sending concurrently,
+//! as they will each use a different shard.
+//!
+//! # Performance Implications
+//!
+//! **Sharded vs. Normal MPSC:**
+//!
+//! *   **Reduced Contention:** Standard MPSC queues have a single contention point (the tail) for all producers.
+//!     This sharded implementation gives each producer (up to `max_shards`) its own dedicated SPSC queue to write to.
+//!     This eliminates producer-side contention entirely.
+//! *   **Consumer Overhead:** The consumer must poll all shards. This adds slight overhead compared to reading
+//!     from a single queue, but is usually outweighed by the throughput gains from contention-free sending.
+//! *   **Trade-offs:**
+//!     *   **Bounded Producers:** The number of concurrent producers is limited by `max_shards`.
+//!     *   **Memory:** Higher memory usage due to multiple buffers.
+//!     *   **Ordering:** Messages are FIFO within a shard, but there is no strict ordering between messages
+//!         sent to different shards.
+
 use std::{num::NonZeroUsize, ptr::NonNull};
 
 use crate::spsc;
@@ -7,9 +28,7 @@ mod sender;
 
 /// Creates a new sharded multi-producer single-consumer channel.
 ///
-/// The channel is composed of multiple shards, each being a single-producer single-consumer queue.
-/// This structure allows for high throughput when multiple threads are sending concurrently,
-/// as they will each use a different shard.
+/// See the [module-level documentation](self) for more details on performance implications.
 ///
 /// # Arguments
 ///
