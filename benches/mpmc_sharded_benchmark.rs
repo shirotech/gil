@@ -285,8 +285,8 @@ fn benchmark(c: &mut Criterion) {
                                         continue;
                                     }
 
-                                    for i in 0..len {
-                                        buf[i].write(black_box(sent + i));
+                                    for (i, item) in buf.iter_mut().enumerate().take(len) {
+                                        item.write(black_box(sent + i));
                                     }
 
                                     unsafe { tx_clone.commit(len) };
@@ -305,8 +305,8 @@ fn benchmark(c: &mut Criterion) {
                                     continue;
                                 }
 
-                                for i in 0..len {
-                                    buf[i].write(black_box(sent + i));
+                                for (i, item) in buf.iter_mut().enumerate().take(len) {
+                                    item.write(black_box(sent + i));
                                 }
 
                                 unsafe { tx.commit(len) };
@@ -440,8 +440,8 @@ fn benchmark(c: &mut Criterion) {
                                         continue;
                                     }
 
-                                    for i in 0..len {
-                                        buf[i].write(black_box(Payload1024::new(0)));
+                                    for item in buf.iter_mut().take(len) {
+                                        item.write(black_box(Payload1024::new(0)));
                                     }
 
                                     unsafe { tx_clone.commit(len) };
@@ -460,8 +460,8 @@ fn benchmark(c: &mut Criterion) {
                                     continue;
                                 }
 
-                                for i in 0..len {
-                                    buf[i].write(black_box(Payload1024::new(0)));
+                                for item in buf.iter_mut().take(len) {
+                                    item.write(black_box(Payload1024::new(0)));
                                 }
 
                                 unsafe { tx.commit(len) };

@@ -111,7 +111,7 @@ let (tx, mut rx) = channel::<usize>(max_shards, capacity_per_shard);
 
 // Clone sender to use different shards
 // Note: This returns Option<Sender>, returning None if all shards are busy.
-if let Some(mut tx2) = tx.clone() {
+if let Some(mut tx2) = tx.try_clone() {
     thread::spawn(move || {
         tx2.send(42);
     });
