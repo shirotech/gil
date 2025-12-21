@@ -17,7 +17,7 @@
 //!
 //! * Adapted from [Dmitry Vyukov's Bounded MPMC Queue](http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue)
 
-use std::num::NonZeroUsize;
+use core::num::NonZeroUsize;
 
 pub use self::{receiver::Receiver, sender::Sender};
 

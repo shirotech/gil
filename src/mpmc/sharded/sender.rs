@@ -1,6 +1,7 @@
 use core::{mem::MaybeUninit, num::NonZeroUsize, ptr::NonNull};
 
 use crate::{
+    Box,
     spsc::{self, shards::ShardsPtr},
     sync::atomic::{AtomicUsize, Ordering},
 };

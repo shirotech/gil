@@ -1,4 +1,4 @@
-use std::mem::MaybeUninit;
+use core::mem::MaybeUninit;
 
 use crate::{atomic::Ordering, spsc::queue::QueuePtr};
 
@@ -67,7 +67,7 @@ impl<T> Sender<T> {
     /// This method yields the current task if the queue is full.
     #[cfg(feature = "async")]
     pub async fn send_async(&mut self, value: T) {
-        use std::task::Poll;
+        use core::task::Poll;
 
         let new_tail = self.local_tail.wrapping_add(1);
 
@@ -116,8 +116,8 @@ impl<T> Sender<T> {
     ///
     /// # Usage
     ///
-    /// It returns a slice of [`MaybeUninit`](std::mem::MaybeUninit) to prevent UB, you can use
-    /// [`copy_nonoverlapping`](std::ptr::copy_nonoverlapping) if you want fast copying between
+    /// It returns a slice of [`MaybeUninit`](core::mem::MaybeUninit) to prevent UB, you can use
+    /// [`copy_nonoverlapping`](core::ptr::copy_nonoverlapping) if you want fast copying between
     /// this and your own data.
     pub fn write_buffer(&mut self) -> &mut [MaybeUninit<T>] {
         let mut available = self.ptr.size - self.local_tail.wrapping_sub(self.local_head);
@@ -133,7 +133,7 @@ impl<T> Sender<T> {
 
         unsafe {
             let ptr = self.ptr.exact_at(start).cast();
-            std::slice::from_raw_parts_mut(ptr.as_ptr(), len)
+            core::slice::from_raw_parts_mut(ptr.as_ptr(), len)
         }
     }
 

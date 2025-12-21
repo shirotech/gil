@@ -1,4 +1,4 @@
-use std::{
+use core::{
     marker::PhantomData,
     mem::{align_of, size_of},
     num::NonZeroUsize,
@@ -57,7 +57,7 @@ impl<T> QueuePtr<T> {
         // SAFETY: capacity > 0, so layout is non-zero too
         let ptr = unsafe { alloc::alloc(layout) } as *mut Queue;
         let Some(ptr) = NonNull::new(ptr) else {
-            std::alloc::handle_alloc_error(layout);
+            alloc::handle_alloc_error(layout);
         };
 
         // calculate buffer pointer
@@ -77,7 +77,7 @@ impl<T> QueuePtr<T> {
         };
 
         // SAFETY: we just allocated it, and atomics are safe to access without initialisation
-        let buffer_slice = unsafe { std::slice::from_raw_parts_mut(buffer.as_ptr(), capacity) };
+        let buffer_slice = unsafe { core::slice::from_raw_parts_mut(buffer.as_ptr(), capacity) };
         for (idx, cell) in buffer_slice.iter_mut().enumerate() {
             cell.epoch.store(idx, Ordering::Relaxed);
         }
@@ -130,7 +130,7 @@ impl<T> Drop for QueuePtr<T> {
 
             let tail = self.tail().load(Ordering::Relaxed);
 
-            if std::mem::needs_drop::<T>() {
+            if core::mem::needs_drop::<T>() {
                 for i in 1..=self.capacity {
                     let idx = tail.wrapping_sub(i);
                     let cell = self.at(idx);

@@ -21,7 +21,7 @@
 //!
 //! * [Dmitry Vyukov's Bounded MPMC Queue](http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue)
 
-use std::num::NonZeroUsize;
+use core::num::NonZeroUsize;
 
 pub use self::{receiver::Receiver, sender::Sender};
 
@@ -45,7 +45,7 @@ pub mod sharded;
 /// # Examples
 ///
 /// ```
-/// use std::num::NonZeroUsize;
+/// use core::num::NonZeroUsize;
 /// use gil::mpmc::channel;
 ///
 /// let (tx, rx) = channel::<usize>(NonZeroUsize::new(1024).unwrap());

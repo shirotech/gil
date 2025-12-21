@@ -12,7 +12,7 @@ The most optimized queue for 1-to-1 thread communication.
 
 ```rust
 use std::thread;
-use std::num::NonZeroUsize;
+use core::num::NonZeroUsize;
 use gil::spsc::channel;
 
 const COUNT: usize = 100_000;
@@ -39,7 +39,7 @@ Useful when multiple threads need to send data to a single worker thread.
 
 ```rust
 use std::thread;
-use std::num::NonZeroUsize;
+use core::num::NonZeroUsize;
 use gil::mpsc::channel;
 
 let (tx, mut rx) = channel::<usize>(NonZeroUsize::new(1024).unwrap());
@@ -67,7 +67,7 @@ The most flexible queue, allowing multiple senders and multiple receivers.
 
 ```rust
 use std::thread;
-use std::num::NonZeroUsize;
+use core::num::NonZeroUsize;
 use gil::mpmc::channel;
 
 let (tx, rx) = channel::<usize>(NonZeroUsize::new(1024).unwrap());
@@ -102,7 +102,7 @@ For high-throughput scenarios where multiple threads access the queue concurrent
 
 ```rust
 use std::thread;
-use std::num::NonZeroUsize;
+use core::num::NonZeroUsize;
 use gil::mpmc::sharded::channel;
 
 let max_shards = NonZeroUsize::new(8).unwrap();
@@ -132,7 +132,7 @@ gil = { version = "0.3", features = ["async"] }
 
 ```rust,ignore
 use gil::spsc::channel;
-use std::num::NonZeroUsize;
+use core::num::NonZeroUsize;
 
 const COUNT: usize = 100_000;
 
@@ -158,7 +158,7 @@ handle.await.unwrap();
 
 ```rust
 use gil::spsc::channel;
-use std::num::NonZeroUsize;
+use core::num::NonZeroUsize;
 
 let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(10).unwrap());
 
@@ -181,8 +181,8 @@ For maximum performance, you can directly access the internal buffer. This allow
 
 ```rust
 use gil::spsc::channel;
-use std::ptr;
-use std::num::NonZeroUsize;
+use core::ptr;
+use core::num::NonZeroUsize;
 
 let (mut tx, mut rx) = channel::<usize>(NonZeroUsize::new(128).unwrap());
 
@@ -228,7 +228,7 @@ For large objects, consider using `Box<T>` to avoid the cost of copying the enti
 
 ```rust
 use gil::spsc::channel;
-use std::num::NonZeroUsize;
+use core::num::NonZeroUsize;
 
 struct LargeStruct {
     data: [u8; 1024],

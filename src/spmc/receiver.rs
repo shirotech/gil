@@ -31,7 +31,7 @@ impl<T> Receiver<T> {
     }
 
     pub fn try_recv(&mut self) -> Option<T> {
-        use std::cmp::Ordering as Cmp;
+        use core::cmp::Ordering as Cmp;
 
         let mut backoff = crate::Backoff::with_spin_count(16);
         loop {

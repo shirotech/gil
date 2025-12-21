@@ -1,5 +1,5 @@
 use crate::{
-    Backoff,
+    Backoff, Box,
     spsc::{self, shards::ShardsPtr},
 };
 
@@ -73,7 +73,7 @@ impl<T> Receiver<T> {
             let ret = self.receivers[self.next_shard].read_buffer();
 
             if !ret.is_empty() {
-                return unsafe { std::mem::transmute::<&[T], &[T]>(ret) };
+                return unsafe { core::mem::transmute::<&[T], &[T]>(ret) };
             }
 
             self.next_shard += 1;

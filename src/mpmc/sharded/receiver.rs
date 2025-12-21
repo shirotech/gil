@@ -1,7 +1,7 @@
 use core::ptr::{self, NonNull};
 
 use crate::{
-    Backoff,
+    Backoff, Box,
     padded::Padded,
     spsc::{self, shards::ShardsPtr},
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -18,7 +18,7 @@ pub struct ReadGuard<'a, T> {
     consumed: usize,
 }
 
-impl<'a, T> std::ops::Deref for ReadGuard<'a, T> {
+impl<'a, T> core::ops::Deref for ReadGuard<'a, T> {
     type Target = [T];
     fn deref(&self) -> &Self::Target {
         unsafe { self.data.as_ref() }

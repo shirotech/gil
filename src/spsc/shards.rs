@@ -17,7 +17,7 @@ impl<T> Shards<T> {
     pub fn new(max_shards: NonZeroUsize) -> NonNull<Self> {
         let layout = Self::layout(max_shards.get());
         let Some(ptr) = NonNull::new(unsafe { alloc::alloc(layout) }) else {
-            std::alloc::handle_alloc_error(layout)
+            alloc::handle_alloc_error(layout)
         };
 
         unsafe { ptr.cast::<AtomicUsize>().write(AtomicUsize::new(1)) };

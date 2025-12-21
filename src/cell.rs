@@ -1,4 +1,4 @@
-use std::{mem::MaybeUninit, ptr::NonNull};
+use core::{mem::MaybeUninit, ptr::NonNull};
 
 use crate::atomic::AtomicUsize;
 
@@ -33,9 +33,9 @@ impl<T> CellPtr<T> {
 
     #[inline(always)]
     pub(crate) unsafe fn drop_in_place(&self) {
-        if std::mem::needs_drop::<T>() {
+        if core::mem::needs_drop::<T>() {
             unsafe {
-                std::ptr::drop_in_place(_field!(Cell<T>, self.ptr, data, T).as_ptr());
+                core::ptr::drop_in_place(_field!(Cell<T>, self.ptr, data, T).as_ptr());
             }
         }
     }

@@ -1,6 +1,6 @@
 #[cfg(feature = "async")]
-use std::task::Waker;
-use std::{
+use core::task::Waker;
+use core::{
     marker::PhantomData,
     mem::{align_of, size_of},
     num::NonZeroUsize,
@@ -72,7 +72,7 @@ impl<T> QueuePtr<T> {
 
         // SAFETY: capacity > 0, so layout is non-zero too
         let Some(ptr) = NonNull::new(unsafe { alloc::alloc(layout) }) else {
-            std::alloc::handle_alloc_error(layout);
+            alloc::handle_alloc_error(layout);
         };
         let ptr = ptr.cast::<Queue>();
 
@@ -211,11 +211,11 @@ impl<T> Drop for QueuePtr<T> {
             let tail = self.tail().load(Ordering::Relaxed);
             let len = tail.wrapping_sub(head);
 
-            if std::mem::needs_drop::<T>() {
+            if core::mem::needs_drop::<T>() {
                 for i in 0..len {
                     let idx = head.wrapping_add(i);
                     unsafe {
-                        std::ptr::drop_in_place(self.at(idx).as_ptr());
+                        core::ptr::drop_in_place(self.at(idx).as_ptr());
                     }
                 }
             }
