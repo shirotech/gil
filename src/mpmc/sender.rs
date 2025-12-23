@@ -1,4 +1,4 @@
-use std::cmp::Ordering as Cmp;
+use core::cmp::Ordering as Cmp;
 
 use crate::{atomic::Ordering, mpmc::queue::QueuePtr};
 

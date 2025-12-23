@@ -19,7 +19,7 @@
 //!
 //! * [Facebook Folly ProducerConsumerQueue](https://github.com/facebook/folly/blob/main/folly/ProducerConsumerQueue.h)
 
-use std::num::NonZeroUsize;
+use core::num::NonZeroUsize;
 
 pub(crate) use self::queue::QueuePtr;
 pub(crate) mod shards;
@@ -44,7 +44,7 @@ mod sender;
 /// # Examples
 ///
 /// ```
-/// use std::num::NonZeroUsize;
+/// use core::num::NonZeroUsize;
 /// use gil::spsc::channel;
 ///
 /// let (tx, rx) = channel::<usize>(NonZeroUsize::new(1024).unwrap());
@@ -195,7 +195,7 @@ mod test {
 
 #[cfg(all(test, feature = "loom"))]
 mod loom_test {
-    use std::num::NonZeroUsize;
+    use core::num::NonZeroUsize;
 
     use super::*;
     use crate::thread;

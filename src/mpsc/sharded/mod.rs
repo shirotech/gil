@@ -61,6 +61,7 @@ mod test {
     use super::*;
 
     use crate::thread;
+    use alloc_crate::vec;
 
     #[test]
     fn basic() {

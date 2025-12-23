@@ -1,4 +1,4 @@
-use std::{
+use core::{
     marker::PhantomData,
     mem::{align_of, size_of},
     num::NonZeroUsize,
@@ -51,7 +51,7 @@ impl<T> QueuePtr<T> {
 
         let ptr = unsafe { alloc::alloc(layout) } as *mut Queue;
         let Some(ptr) = NonNull::new(ptr) else {
-            std::alloc::handle_alloc_error(layout);
+            alloc::handle_alloc_error(layout);
         };
 
         let buffer = unsafe {
@@ -65,7 +65,7 @@ impl<T> QueuePtr<T> {
             });
         };
 
-        let buffer_slice = unsafe { std::slice::from_raw_parts_mut(buffer.as_ptr(), capacity) };
+        let buffer_slice = unsafe { core::slice::from_raw_parts_mut(buffer.as_ptr(), capacity) };
         for (idx, cell) in buffer_slice.iter_mut().enumerate() {
             cell.epoch.store(idx, Ordering::Relaxed);
         }
@@ -112,7 +112,7 @@ impl<T> Drop for QueuePtr<T> {
 
             let head = self.head().load(Ordering::Relaxed);
 
-            if std::mem::needs_drop::<T>() {
+            if core::mem::needs_drop::<T>() {
                 for i in 0..self.capacity {
                     let idx = head.wrapping_add(i);
                     let cell = self.at(idx);

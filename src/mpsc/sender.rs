@@ -44,7 +44,7 @@ impl<T> Sender<T> {
     /// * `Ok(())` if the value was successfully sent.
     /// * `Err(value)` if the queue is full, returning the original value.
     pub fn try_send(&mut self, value: T) -> Result<(), T> {
-        use std::cmp::Ordering as Cmp;
+        use core::cmp::Ordering as Cmp;
 
         let mut backoff = crate::Backoff::with_spin_count(16);
 

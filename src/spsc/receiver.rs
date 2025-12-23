@@ -78,7 +78,7 @@ impl<T> Receiver<T> {
     /// This method yields the current task if the queue is empty.
     #[cfg(feature = "async")]
     pub async fn recv_async(&mut self) -> T {
-        use std::task::Poll;
+        use core::task::Poll;
 
         if self.local_head == self.local_tail {
             futures::future::poll_fn(|ctx| {
@@ -140,7 +140,7 @@ impl<T> Receiver<T> {
 
         unsafe {
             let ptr = self.ptr.exact_at(start);
-            std::slice::from_raw_parts(ptr.as_ptr(), len)
+            core::slice::from_raw_parts(ptr.as_ptr(), len)
         }
     }
 
