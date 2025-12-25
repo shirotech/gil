@@ -10,8 +10,6 @@ use core::{
 #[cfg(feature = "async")]
 use futures::task::AtomicWaker;
 
-#[cfg(feature = "async")]
-use crate::atomic::AtomicBool;
 use crate::{
     alloc,
     atomic::{AtomicUsize, Ordering},
@@ -25,13 +23,9 @@ use crate::{
 struct Queue {
     head: Padded<AtomicUsize>,
     #[cfg(feature = "async")]
-    sender_sleeping: Padded<AtomicBool>,
-    #[cfg(feature = "async")]
     receiver_waker: Padded<AtomicWaker>,
 
     tail: Padded<AtomicUsize>,
-    #[cfg(feature = "async")]
-    receiver_sleeping: Padded<AtomicBool>,
     #[cfg(feature = "async")]
     sender_waker: Padded<AtomicWaker>,
 
@@ -86,12 +80,6 @@ impl<T> QueuePtr<T> {
             ptr.write(Queue {
                 head: Padded::new(AtomicUsize::new(0)),
                 tail: Padded::new(AtomicUsize::new(0)),
-
-                #[cfg(feature = "async")]
-                sender_sleeping: Padded::new(AtomicBool::new(false)),
-
-                #[cfg(feature = "async")]
-                receiver_sleeping: Padded::new(AtomicBool::new(false)),
 
                 #[cfg(feature = "async")]
                 sender_waker: Padded::new(AtomicWaker::new()),
@@ -188,16 +176,6 @@ impl<T> QueuePtr<T> {
                 .as_ref()
                 .wake();
         }
-    }
-
-    #[inline(always)]
-    pub(crate) fn sender_sleeping(&self) -> &AtomicBool {
-        unsafe { _field!(Queue, self.ptr, sender_sleeping.value, AtomicBool).as_ref() }
-    }
-
-    #[inline(always)]
-    pub(crate) fn receiver_sleeping(&self) -> &AtomicBool {
-        unsafe { _field!(Queue, self.ptr, receiver_sleeping.value, AtomicBool).as_ref() }
     }
 }
 

@@ -41,6 +41,9 @@ impl<T> Sender<T> {
         self.store_tail(new_tail);
         self.local_tail = new_tail;
 
+        #[cfg(feature = "async")]
+        self.ptr.wake_receiver();
+
         Ok(())
     }
 
@@ -60,6 +63,9 @@ impl<T> Sender<T> {
         unsafe { self.ptr.set(self.local_tail, value) };
         self.store_tail(new_tail);
         self.local_tail = new_tail;
+
+        #[cfg(feature = "async")]
+        self.ptr.wake_receiver();
     }
 
     /// Sends a value into the queue asynchronously.
@@ -76,16 +82,12 @@ impl<T> Sender<T> {
                 self.load_head();
                 if new_tail > self.max_tail() {
                     self.ptr.register_sender_waker(ctx.waker());
-                    self.ptr.sender_sleeping().store(true, Ordering::SeqCst);
 
                     // prevent lost wake
                     self.local_head = self.ptr.head().load(Ordering::SeqCst);
                     if new_tail > self.max_tail() {
                         return Poll::Pending;
                     }
-
-                    // not sleeping anymore
-                    self.ptr.sender_sleeping().store(false, Ordering::Relaxed);
                 }
                 Poll::Ready(())
             })
@@ -96,9 +98,7 @@ impl<T> Sender<T> {
         self.store_tail(new_tail);
         self.local_tail = new_tail;
 
-        if self.ptr.receiver_sleeping().load(Ordering::SeqCst) {
-            self.ptr.wake_receiver();
-        }
+        self.ptr.wake_receiver();
     }
 
     /// Returns a mutable slice to the available write buffer in the queue.
@@ -162,6 +162,9 @@ impl<T> Sender<T> {
         let new_tail = self.local_tail.wrapping_add(len);
         self.store_tail(new_tail);
         self.local_tail = new_tail;
+
+        #[cfg(feature = "async")]
+        self.ptr.wake_receiver();
     }
 
     #[inline(always)]

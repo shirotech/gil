@@ -49,6 +49,9 @@ impl<T> Receiver<T> {
         self.store_head(new_head);
         self.local_head = new_head;
 
+        #[cfg(feature = "async")]
+        self.ptr.wake_sender();
+
         Some(ret)
     }
 
@@ -70,6 +73,9 @@ impl<T> Receiver<T> {
         self.store_head(new_head);
         self.local_head = new_head;
 
+        #[cfg(feature = "async")]
+        self.ptr.wake_sender();
+
         ret
     }
 
@@ -85,16 +91,12 @@ impl<T> Receiver<T> {
                 self.load_tail();
                 if self.local_head == self.local_tail {
                     self.ptr.register_receiver_waker(ctx.waker());
-                    self.ptr.receiver_sleeping().store(true, Ordering::SeqCst);
 
                     // prevent lost wake
                     self.local_tail = self.ptr.tail().load(Ordering::SeqCst);
                     if self.local_head == self.local_tail {
                         return Poll::Pending;
                     }
-
-                    // not sleeping anymore
-                    self.ptr.receiver_sleeping().store(false, Ordering::Relaxed);
                 }
                 Poll::Ready(())
             })
@@ -108,9 +110,7 @@ impl<T> Receiver<T> {
         self.store_head(new_head);
         self.local_head = new_head;
 
-        if self.ptr.sender_sleeping().load(Ordering::SeqCst) {
-            self.ptr.wake_sender();
-        }
+        self.ptr.wake_sender();
 
         ret
     }
@@ -170,6 +170,9 @@ impl<T> Receiver<T> {
         let new_head = self.local_head.wrapping_add(len);
         self.store_head(new_head);
         self.local_head = new_head;
+
+        #[cfg(feature = "async")]
+        self.ptr.wake_sender();
     }
 
     #[inline(always)]
