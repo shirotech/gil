@@ -1,3 +1,4 @@
+use core::ptr::NonNull;
 #[cfg(feature = "async")]
 use core::task::Waker;
 
@@ -29,9 +30,10 @@ pub(crate) struct GetInit;
 
 impl<T> crate::GetInit<Head, Tail, T> for GetInit {
     unsafe fn get_init(
-        head: core::ptr::NonNull<Head>,
-        tail: core::ptr::NonNull<Tail>,
-        _size: usize,
+        head: NonNull<Head>,
+        tail: NonNull<Tail>,
+        _capaity: usize,
+        _at: impl Fn(usize) -> NonNull<T>,
     ) -> impl Iterator<Item = usize> {
         let (head, tail) = unsafe {
             let head = _field!(Head, head, head.value, AtomicUsize)

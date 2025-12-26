@@ -63,7 +63,7 @@ mod test {
         const THREADS: u32 = 10;
         const ITER: u32 = 1000;
 
-        let (tx, mut rx) = channel(NonZeroUsize::new(4).unwrap());
+        let (tx, mut rx) = channel::<(u32, u32)>(NonZeroUsize::new(4).unwrap());
 
         thread::scope(move |scope| {
             for thread_id in 0..THREADS {

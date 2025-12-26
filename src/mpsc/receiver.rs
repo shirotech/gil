@@ -24,7 +24,7 @@ impl<T> Receiver<T> {
     pub fn recv(&mut self) -> T {
         let next_head = self.local_head.wrapping_add(1);
 
-        let cell = self.ptr.at(self.local_head);
+        let cell = self.ptr.cell_at(self.local_head);
         let mut backoff = crate::Backoff::with_spin_count(16);
         while cell.epoch().load(Ordering::Acquire) < next_head {
             backoff.backoff();
@@ -50,7 +50,7 @@ impl<T> Receiver<T> {
     pub fn try_recv(&mut self) -> Option<T> {
         let next_head = self.local_head.wrapping_add(1);
 
-        let cell = self.ptr.at(self.local_head);
+        let cell = self.ptr.cell_at(self.local_head);
         if cell.epoch().load(Ordering::Acquire) < next_head {
             return None;
         }

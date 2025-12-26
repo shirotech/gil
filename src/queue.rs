@@ -14,9 +14,10 @@ pub(crate) struct Queue<H, T> {
 
 pub(crate) trait GetInit<H, T, I> {
     unsafe fn get_init(
-        head: core::ptr::NonNull<H>,
-        tail: core::ptr::NonNull<T>,
-        size: usize,
+        head: NonNull<H>,
+        tail: NonNull<T>,
+        capaity: usize,
+        at: impl Fn(usize) -> NonNull<I>,
     ) -> impl Iterator<Item = usize>;
 }
 
@@ -105,7 +106,7 @@ impl<H, T, I, G: GetInit<H, T, I>> QueuePtr<H, T, I, G> {
     }
 
     #[inline(always)]
-    pub(crate) unsafe fn at(&self, index: usize) -> NonNull<I> {
+    pub(crate) fn at(&self, index: usize) -> NonNull<I> {
         unsafe { self.exact_at(index & self.mask) }
     }
 
@@ -131,7 +132,8 @@ impl<H, T, I, G: GetInit<H, T, I>> Drop for QueuePtr<H, T, I, G> {
                     G::get_init(
                         _field!(Queue<H, T>, self.ptr, head, H),
                         _field!(Queue<H, T>, self.ptr, tail, T),
-                        self.size,
+                        self.capacity,
+                        |i| self.at(i),
                     )
                 };
 
