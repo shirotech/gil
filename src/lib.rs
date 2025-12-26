@@ -54,7 +54,9 @@ mod cell;
 pub mod mpmc;
 pub mod mpsc;
 mod padded;
+pub mod queue;
 pub mod spmc;
 pub mod spsc;
 
 pub use backoff::Backoff;
+pub(crate) use queue::*;

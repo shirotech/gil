@@ -159,13 +159,12 @@ mod test {
 
     #[test]
     fn test_drop_remaining_elements() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
         #[derive(Clone)]
-        struct DropCounter(#[allow(dead_code)] Arc<()>);
+        struct DropCounter;
 
         impl Drop for DropCounter {
             fn drop(&mut self) {
@@ -180,7 +179,7 @@ mod test {
 
             // Send 5 items but don't receive them
             for _ in 0..5 {
-                tx.send(DropCounter(Arc::new(())));
+                tx.send(DropCounter);
             }
 
             // Drop both ends - remaining items should be dropped
@@ -257,8 +256,8 @@ mod loom_test {
                     let buf = tx.write_buffer();
                     if !buf.is_empty() {
                         let count = buf.len().min(total - sent);
-                        for i in 0..count {
-                            buf[i].write(sent + i);
+                        for (i, item) in buf.iter_mut().take(count).enumerate() {
+                            item.write(sent + i);
                         }
                         unsafe { tx.commit(count) };
                         sent += count;
@@ -272,8 +271,8 @@ mod loom_test {
                 let buf = rx.read_buffer();
                 if !buf.is_empty() {
                     let count = buf.len();
-                    for i in 0..count {
-                        assert_eq!(buf[i], received + i);
+                    for (i, item) in buf.iter().take(count).enumerate() {
+                        assert_eq!(*item, received + i);
                     }
                     unsafe { rx.advance(count) };
                     received += count;

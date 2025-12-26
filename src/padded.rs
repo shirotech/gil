@@ -1,3 +1,4 @@
+#[derive(Default)]
 #[repr(align(64))]
 #[cfg_attr(all(target_arch = "aarch64", target_os = "macos"), repr(align(128)))]
 pub(crate) struct Padded<T> {
