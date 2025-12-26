@@ -28,13 +28,17 @@ pub(crate) struct Tail {
 
 pub(crate) struct GetInit;
 
-impl<T> crate::GetInit<Head, Tail, T> for GetInit {
-    unsafe fn get_init(
+impl<T> crate::DropInitItems<Head, Tail, T> for GetInit {
+    unsafe fn drop_init_items(
         head: NonNull<Head>,
         tail: NonNull<Tail>,
         _capaity: usize,
-        _at: impl Fn(usize) -> NonNull<T>,
-    ) -> impl Iterator<Item = usize> {
+        at: impl Fn(usize) -> NonNull<T>,
+    ) {
+        if !core::mem::needs_drop::<T>() {
+            return;
+        }
+
         let (head, tail) = unsafe {
             let head = _field!(Head, head, head.value, AtomicUsize)
                 .as_ref()
@@ -46,7 +50,10 @@ impl<T> crate::GetInit<Head, Tail, T> for GetInit {
         };
         let len = tail.wrapping_sub(head);
 
-        (0..len).map(move |i| head.wrapping_add(i))
+        for i in 0..len {
+            let idx = head.wrapping_add(i);
+            unsafe { at(idx).drop_in_place() };
+        }
     }
 }
 

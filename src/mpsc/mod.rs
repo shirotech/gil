@@ -23,6 +23,7 @@ use core::num::NonZeroUsize;
 pub use self::{receiver::Receiver, sender::Sender};
 
 mod queue;
+// mod queue_old;
 mod receiver;
 mod sender;
 pub mod sharded;
@@ -49,6 +50,8 @@ pub mod sharded;
 /// ```
 pub fn channel<T>(capacity: NonZeroUsize) -> (Sender<T>, Receiver<T>) {
     let queue = queue::QueuePtr::with_size(capacity);
+    queue.initialize::<queue::Initializer<T>>();
+
     (Sender::new(queue.clone()), Receiver::new(queue))
 }
 

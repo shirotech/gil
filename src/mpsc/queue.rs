@@ -1,3 +1,5 @@
+use core::marker::PhantomData;
+
 use crate::{
     atomic::{AtomicUsize, Ordering},
     cell::{Cell, CellPtr},
@@ -11,23 +13,38 @@ pub(crate) struct Tail {
 }
 
 pub(crate) struct GetInit;
-impl<T> crate::GetInit<(), Tail, Cell<T>> for GetInit {
-    unsafe fn get_init(
+impl<T> crate::DropInitItems<(), Tail, Cell<T>> for GetInit {
+    unsafe fn drop_init_items(
         _head: core::ptr::NonNull<()>,
         tail: core::ptr::NonNull<Tail>,
-        capaity: usize,
+        capacity: usize,
         at: impl Fn(usize) -> core::ptr::NonNull<Cell<T>>,
-    ) -> impl Iterator<Item = usize> {
+    ) {
+        if !core::mem::needs_drop::<T>() {
+            return;
+        }
+
         let tail = unsafe { _field!(Tail, tail, tail.value, AtomicUsize).as_ref() }
             .load(Ordering::Relaxed);
 
-        (1..=capaity).filter_map(move |i| {
+        for i in 1..=capacity {
             let idx = tail.wrapping_sub(i);
-            let cell = at(idx);
-            let epoch = unsafe { _field!(Cell<T>, cell, epoch, AtomicUsize).as_ref() }
-                .load(Ordering::Relaxed);
-            (epoch == idx.wrapping_add(1)).then_some(idx)
-        })
+            let cell = CellPtr::from(at(idx));
+            if cell.epoch().load(Ordering::Relaxed) == idx.wrapping_add(1) {
+                unsafe { cell.drop_in_place() };
+            }
+        }
+    }
+}
+
+pub(crate) struct Initializer<T> {
+    _marker: PhantomData<T>,
+}
+impl<T> crate::Initializer for Initializer<T> {
+    type Item = Cell<T>;
+
+    fn initialize(idx: usize, cell: &mut Self::Item) {
+        cell.epoch.store(idx, Ordering::Relaxed);
     }
 }
 

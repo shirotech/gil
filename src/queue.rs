@@ -12,16 +12,16 @@ pub(crate) struct Queue<H, T> {
     rc: AtomicUsize,
 }
 
-pub(crate) trait GetInit<H, T, I> {
-    unsafe fn get_init(
+pub(crate) trait DropInitItems<H, T, I> {
+    unsafe fn drop_init_items(
         head: NonNull<H>,
         tail: NonNull<T>,
-        capaity: usize,
+        capacity: usize,
         at: impl Fn(usize) -> NonNull<I>,
-    ) -> impl Iterator<Item = usize>;
+    );
 }
 
-pub(crate) struct QueuePtr<H, T, I, G: GetInit<H, T, I>> {
+pub(crate) struct QueuePtr<H, T, I, G: DropInitItems<H, T, I>> {
     pub(crate) ptr: NonNull<Queue<H, T>>,
     pub(crate) buffer: NonNull<I>,
     pub(crate) size: usize,
@@ -30,7 +30,7 @@ pub(crate) struct QueuePtr<H, T, I, G: GetInit<H, T, I>> {
     _marker: PhantomData<G>,
 }
 
-impl<H, T, I, G: GetInit<H, T, I>> Clone for QueuePtr<H, T, I, G> {
+impl<H, T, I, G: DropInitItems<H, T, I>> Clone for QueuePtr<H, T, I, G> {
     fn clone(&self) -> Self {
         let rc = unsafe { _field!(Queue<H, T>, self.ptr, rc, AtomicUsize).as_ref() };
         rc.fetch_add(1, Ordering::AcqRel);
@@ -49,7 +49,7 @@ impl<H, T, I, G> QueuePtr<H, T, I, G>
 where
     H: Default,
     T: Default,
-    G: GetInit<H, T, I>,
+    G: DropInitItems<H, T, I>,
 {
     pub(crate) fn with_size(size: NonZeroUsize) -> Self {
         // Allocate exactly capacity + 1 slots (one slot is always empty to distinguish full from empty)
@@ -90,7 +90,13 @@ where
     }
 }
 
-impl<H, T, I, G: GetInit<H, T, I>> QueuePtr<H, T, I, G> {
+pub(crate) trait Initializer {
+    type Item;
+
+    fn initialize(idx: usize, item: &mut Self::Item);
+}
+
+impl<H, T, I, G: DropInitItems<H, T, I>> QueuePtr<H, T, I, G> {
     fn layout(capacity: usize) -> (alloc::Layout, usize) {
         let header_layout =
             alloc::Layout::from_size_align(size_of::<Queue<H, T>>(), align_of::<Queue<H, T>>())
@@ -98,6 +104,12 @@ impl<H, T, I, G: GetInit<H, T, I>> QueuePtr<H, T, I, G> {
         let buffer_layout = alloc::Layout::array::<I>(capacity).unwrap();
         let (layout, offset) = header_layout.extend(buffer_layout).unwrap();
         (layout.pad_to_align(), offset)
+    }
+
+    pub(crate) fn initialize<Z: Initializer<Item = I>>(&self) {
+        for i in 0..self.capacity {
+            Z::initialize(i, unsafe { self.exact_at(i).as_mut() });
+        }
     }
 
     #[inline(always)]
@@ -121,28 +133,20 @@ impl<H, T, I, G: GetInit<H, T, I>> QueuePtr<H, T, I, G> {
     }
 }
 
-impl<H, T, I, G: GetInit<H, T, I>> Drop for QueuePtr<H, T, I, G> {
+impl<H, T, I, G: DropInitItems<H, T, I>> Drop for QueuePtr<H, T, I, G> {
     fn drop(&mut self) {
         let rc = unsafe { _field!(Queue<H, T>, self.ptr, rc, AtomicUsize).as_ref() };
         if rc.fetch_sub(1, Ordering::AcqRel) == 1 {
             let (layout, _) = Self::layout(self.capacity);
 
-            if core::mem::needs_drop::<I>() {
-                let iter = unsafe {
-                    G::get_init(
-                        _field!(Queue<H, T>, self.ptr, head, H),
-                        _field!(Queue<H, T>, self.ptr, tail, T),
-                        self.capacity,
-                        |i| self.at(i),
-                    )
-                };
-
-                for idx in iter {
-                    unsafe {
-                        core::ptr::drop_in_place(self.at(idx).as_ptr());
-                    }
-                }
-            }
+            unsafe {
+                G::drop_init_items(
+                    _field!(Queue<H, T>, self.ptr, head, H),
+                    _field!(Queue<H, T>, self.ptr, tail, T),
+                    self.capacity,
+                    |i| self.at(i),
+                )
+            };
 
             unsafe {
                 self.ptr.drop_in_place();
