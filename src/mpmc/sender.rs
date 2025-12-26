@@ -28,7 +28,7 @@ impl<T> Sender<T> {
         let tail = self.ptr.tail().fetch_add(1, Ordering::Relaxed);
         let next = tail.wrapping_add(1);
 
-        let cell = self.ptr.at(tail);
+        let cell = self.ptr.cell_at(tail);
         let mut backoff = crate::Backoff::with_spin_count(128);
         while cell.epoch().load(Ordering::Acquire) != tail {
             backoff.backoff();
@@ -49,7 +49,7 @@ impl<T> Sender<T> {
         let mut backoff = crate::Backoff::with_spin_count(16);
 
         let cell = loop {
-            let cell = self.ptr.at(self.local_tail);
+            let cell = self.ptr.cell_at(self.local_tail);
             let epoch = cell.epoch().load(Ordering::Acquire);
 
             match epoch.cmp(&self.local_tail) {

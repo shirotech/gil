@@ -14,7 +14,7 @@ impl<T> Sender<T> {
     }
 
     pub fn send(&mut self, value: T) {
-        let cell = self.ptr.at(self.local_tail);
+        let cell = self.ptr.cell_at(self.local_tail);
         let mut backoff = crate::Backoff::with_spin_count(128);
         while cell.epoch().load(Ordering::Acquire) != self.local_tail {
             backoff.backoff();
@@ -27,7 +27,7 @@ impl<T> Sender<T> {
     }
 
     pub fn try_send(&mut self, value: T) -> Result<(), T> {
-        let cell = self.ptr.at(self.local_tail);
+        let cell = self.ptr.cell_at(self.local_tail);
         if cell.epoch().load(Ordering::Acquire) != self.local_tail {
             return Err(value);
         }

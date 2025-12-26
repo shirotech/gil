@@ -38,6 +38,8 @@ mod sender;
 /// A tuple containing the [`Sender`] and [`Receiver`] handles.
 pub fn channel<T>(capacity: NonZeroUsize) -> (Sender<T>, Receiver<T>) {
     let queue = queue::QueuePtr::with_size(capacity);
+    queue.initialize::<queue::Initializer<T>>();
+
     (Sender::new(queue.clone()), Receiver::new(queue))
 }
 

@@ -17,7 +17,7 @@ impl<T> Receiver<T> {
         let head = self.ptr.head().fetch_add(1, Ordering::Relaxed);
         let next_head = head.wrapping_add(1);
 
-        let cell = self.ptr.at(head);
+        let cell = self.ptr.cell_at(head);
         let mut backoff = crate::Backoff::with_spin_count(128);
         while cell.epoch().load(Ordering::Acquire) != next_head {
             backoff.backoff();
@@ -35,7 +35,7 @@ impl<T> Receiver<T> {
 
         let mut backoff = crate::Backoff::with_spin_count(16);
         loop {
-            let cell = self.ptr.at(self.local_head);
+            let cell = self.ptr.cell_at(self.local_head);
             let epoch = cell.epoch().load(Ordering::Acquire);
             let next_head = self.local_head.wrapping_add(1);
 
