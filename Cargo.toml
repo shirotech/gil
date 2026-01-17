@@ -11,7 +11,7 @@ homepage = "https://github.com/abhikjain360/gil"
 keywords = ["queue", "spsc", "channel", "async", "lock-free"]
 categories = ["concurrency", "data-structures", "asynchronous"]
 readme = "README.md"
-exclude = [".lazy.lua"]
+exclude = [".lazy.lua", "Cargo.lock", "AGENTS.md", "CLAUDE.md"]
 
 [dependencies]
 futures = { version = "0.3.31", optional = true, default-features = false }
