@@ -73,6 +73,8 @@ pub use self::{receiver::Receiver, sender::Sender};
 mod queue;
 mod receiver;
 mod sender;
+#[cfg(feature = "std")]
+pub mod parking;
 
 /// Creates a new single-producer single-consumer (SPSC) queue.
 ///

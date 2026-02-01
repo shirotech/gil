@@ -35,6 +35,10 @@ name = "spsc_benchmark"
 harness = false
 
 [[bench]]
+name = "spsc_parking_benchmark"
+harness = false
+
+[[bench]]
 name = "mpsc_benchmark"
 harness = false
 

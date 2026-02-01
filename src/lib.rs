@@ -59,4 +59,5 @@ pub mod spmc;
 pub mod spsc;
 
 pub use backoff::Backoff;
+pub use backoff::ParkingBackoff;
 pub(crate) use queue::*;

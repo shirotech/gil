@@ -130,3 +130,85 @@ impl Backoff {
         self.current = 0;
     }
 }
+
+/// A three-phase backoff strategy: spin, then yield, then signal readiness to park.
+///
+/// This is designed for use with [`thread::park`](std::thread::park). The caller
+/// is responsible for setting up parking state and calling `park()` when
+/// [`backoff`](ParkingBackoff::backoff) returns `false`.
+///
+/// The strategy works as follows:
+/// 1. For the first `spin_count` calls, the CPU spins via [`core::hint::spin_loop`].
+/// 2. For the next `yield_count` calls, the thread yields via
+///    [`std::thread::yield_now`] (or [`core::hint::spin_loop`] in `no_std`).
+/// 3. After both phases are exhausted, [`backoff`](ParkingBackoff::backoff) returns
+///    `false`, indicating the caller should park the thread.
+///
+/// After waking from park, call [`reset`](ParkingBackoff::reset) to restart from
+/// the spinning phase.
+///
+/// # Examples
+///
+/// ```
+/// use gil::ParkingBackoff;
+///
+/// let mut backoff = ParkingBackoff::new(128, 10);
+/// // First 128 calls spin, next 10 yield, then returns false
+/// for _ in 0..138 {
+///     assert!(backoff.backoff());
+/// }
+/// assert!(!backoff.backoff()); // ready to park
+/// backoff.reset();
+/// assert!(backoff.backoff()); // spinning again
+/// ```
+pub struct ParkingBackoff {
+    spin_count: u32,
+    yield_count: u32,
+    spins: u32,
+    yields: u32,
+}
+
+impl ParkingBackoff {
+    /// Creates a new `ParkingBackoff` with the given spin and yield counts.
+    #[inline(always)]
+    pub fn new(spin_count: u32, yield_count: u32) -> Self {
+        Self {
+            spin_count,
+            yield_count,
+            spins: 0,
+            yields: 0,
+        }
+    }
+
+    /// Performs one backoff step.
+    ///
+    /// Returns `true` if a spin or yield was performed. Returns `false` when
+    /// both phases are exhausted and the caller should park the thread.
+    ///
+    /// After parking and waking, call [`reset`](ParkingBackoff::reset) to
+    /// restart from the spinning phase.
+    #[inline(always)]
+    pub fn backoff(&mut self) -> bool {
+        if self.spins < self.spin_count {
+            crate::hint::spin_loop();
+            self.spins += 1;
+            true
+        } else if self.yields < self.yield_count {
+            crate::thread::yield_now();
+            self.yields += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Resets both counters to zero.
+    ///
+    /// Call this after waking from [`thread::park`](std::thread::park) to
+    /// restart from the spinning phase.
+    #[inline(always)]
+    pub fn reset(&mut self) {
+        self.spins = 0;
+        self.yields = 0;
+    }
+}
