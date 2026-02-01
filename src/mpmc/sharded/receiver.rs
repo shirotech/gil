@@ -12,6 +12,28 @@ type Lock = Padded<AtomicBool>;
 /// A guard that provides read access to a batch of elements from the channel.
 ///
 /// When the guard is dropped, the elements are marked as consumed in the channel.
+/// Use [`advance`](ReadGuard::advance) to mark specific elements as consumed before dropping.
+///
+/// # Examples
+///
+/// ```
+/// use core::num::NonZeroUsize;
+/// use gil::mpmc::sharded::channel;
+///
+/// let (mut tx, mut rx) = channel::<usize>(
+///     NonZeroUsize::new(1).unwrap(),
+///     NonZeroUsize::new(128).unwrap(),
+/// );
+///
+/// tx.send(10);
+/// tx.send(20);
+///
+/// let mut guard = rx.read_buffer();
+/// assert_eq!(guard.len(), 2);
+/// assert_eq!(guard[0], 10);
+/// guard.advance(guard.len());
+/// // Elements are consumed when the guard is dropped
+/// ```
 pub struct ReadGuard<'a, T> {
     receiver: &'a mut Receiver<T>,
     data: NonNull<[T]>,
@@ -40,6 +62,30 @@ impl<'a, T> ReadGuard<'a, T> {
     /// Marks `len` elements as consumed.
     ///
     /// These elements will be removed from the channel when the guard is dropped.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpmc::sharded::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<usize>(
+    ///     NonZeroUsize::new(1).unwrap(),
+    ///     NonZeroUsize::new(128).unwrap(),
+    /// );
+    ///
+    /// tx.send(1);
+    /// tx.send(2);
+    /// tx.send(3);
+    ///
+    /// let mut guard = rx.read_buffer();
+    /// // Only consume the first 2 elements
+    /// guard.advance(2);
+    /// drop(guard);
+    ///
+    /// // Third element is still available
+    /// assert_eq!(rx.recv(), 3);
+    /// ```
     pub fn advance(&mut self, len: usize) {
         debug_assert!(
             self.consumed + len <= self.len(),
@@ -51,7 +97,25 @@ impl<'a, T> ReadGuard<'a, T> {
 
 /// The receiving half of a sharded MPMC channel.
 ///
-/// The receiver attempts to read from shards in a round-robin fashion.
+/// The receiver polls shards in round-robin fashion, returning the first available item.
+/// Multiple receivers can coexist via [`try_clone`](Receiver::try_clone), each competing for
+/// items across shards.
+///
+/// # Examples
+///
+/// ```
+/// use core::num::NonZeroUsize;
+/// use gil::mpmc::sharded::channel;
+///
+/// let (mut tx, mut rx) = channel::<i32>(
+///     NonZeroUsize::new(1).unwrap(),
+///     NonZeroUsize::new(16).unwrap(),
+/// );
+/// tx.send(1);
+/// tx.send(2);
+/// assert_eq!(rx.recv(), 1);
+/// assert_eq!(rx.recv(), 2);
+/// ```
 pub struct Receiver<T> {
     receivers: Box<[spsc::Receiver<T>]>,
     locks: NonNull<Lock>,
@@ -90,7 +154,22 @@ impl<T> Receiver<T> {
 
     /// Attempts to clone the receiver.
     ///
-    /// Returns `Some(Receiver)` if there is an available slot for a new receiver, otherwise returns `None`.
+    /// Returns `Some(Receiver)` if there is an available slot for a new receiver,
+    /// or `None` if the maximum number of receivers has been reached.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpmc::sharded::channel;
+    ///
+    /// let (tx, rx) = channel::<i32>(
+    ///     NonZeroUsize::new(2).unwrap(),
+    ///     NonZeroUsize::new(16).unwrap(),
+    /// );
+    ///
+    /// let rx2 = rx.try_clone().expect("slot available");
+    /// ```
     pub fn try_clone(&self) -> Option<Self> {
         let num_receivers_ref = unsafe { self.alive_receivers.as_ref() };
         if num_receivers_ref.fetch_add(1, Ordering::AcqRel) == self.max_shards {
@@ -118,6 +197,20 @@ impl<T> Receiver<T> {
     /// This method will block (spin) with a default spin count of 128 until a
     /// value is available in any of the shards. For control over the spin count,
     /// use [`Receiver::recv_with_spin_count`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpmc::sharded::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(
+    ///     NonZeroUsize::new(1).unwrap(),
+    ///     NonZeroUsize::new(16).unwrap(),
+    /// );
+    /// tx.send(42);
+    /// assert_eq!(rx.recv(), 42);
+    /// ```
     pub fn recv(&mut self) -> T {
         self.recv_with_spin_count(128)
     }
@@ -129,6 +222,20 @@ impl<T> Receiver<T> {
     /// latency when the queue is expected to fill quickly, at the cost of higher CPU
     /// usage. A lower value yields sooner, reducing CPU usage but potentially
     /// increasing latency.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpmc::sharded::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(
+    ///     NonZeroUsize::new(1).unwrap(),
+    ///     NonZeroUsize::new(16).unwrap(),
+    /// );
+    /// tx.send(42);
+    /// assert_eq!(rx.recv_with_spin_count(32), 42);
+    /// ```
     pub fn recv_with_spin_count(&mut self, spin_count: u32) -> T {
         let mut backoff = Backoff::with_spin_count(spin_count);
         loop {
@@ -141,7 +248,25 @@ impl<T> Receiver<T> {
 
     /// Attempts to receive a value from the channel without blocking.
     ///
-    /// Returns `Some(value)` if a value was received, or `None` if all shards are empty or locked.
+    /// Returns `Some(value)` if a value was received, or `None` if all shards are empty
+    /// or locked by other receivers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpmc::sharded::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(
+    ///     NonZeroUsize::new(1).unwrap(),
+    ///     NonZeroUsize::new(16).unwrap(),
+    /// );
+    ///
+    /// assert_eq!(rx.try_recv(), None);
+    ///
+    /// tx.send(42);
+    /// assert_eq!(rx.try_recv(), Some(42));
+    /// ```
     pub fn try_recv(&mut self) -> Option<T> {
         let start = self.next_shard;
         loop {
@@ -170,7 +295,31 @@ impl<T> Receiver<T> {
 
     /// Returns a [`ReadGuard`] providing read access to a batch of elements from the channel.
     ///
-    /// If no elements are available, an empty [`ReadGuard`] is returned.
+    /// If no elements are available, an empty [`ReadGuard`] is returned. Use
+    /// [`ReadGuard::advance`] to mark elements as consumed before dropping the guard.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpmc::sharded::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<usize>(
+    ///     NonZeroUsize::new(1).unwrap(),
+    ///     NonZeroUsize::new(128).unwrap(),
+    /// );
+    ///
+    /// tx.send(10);
+    /// tx.send(20);
+    ///
+    /// let mut guard = rx.read_buffer();
+    /// assert_eq!(guard[0], 10);
+    /// assert_eq!(guard[1], 20);
+    /// guard.advance(guard.len());
+    /// drop(guard);
+    ///
+    /// assert_eq!(rx.try_recv(), None);
+    /// ```
     pub fn read_buffer(&mut self) -> ReadGuard<'_, T> {
         let start = self.next_shard;
         loop {

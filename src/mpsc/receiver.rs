@@ -1,9 +1,22 @@
 use crate::{atomic::Ordering, mpsc::queue::QueuePtr};
 
-/// The consumer end of the queue.
+/// The consumer end of the MPSC queue.
 ///
-/// This struct is `Send` but not `Sync`. It can be moved to another thread, but cannot be shared
-/// across threads.
+/// This struct is `Send` but not `Sync` or `Clone`. It can be moved to another thread,
+/// but cannot be shared across threads.
+///
+/// # Examples
+///
+/// ```
+/// use core::num::NonZeroUsize;
+/// use gil::mpsc::channel;
+///
+/// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+/// tx.send(1);
+/// tx.send(2);
+/// assert_eq!(rx.recv(), 1);
+/// assert_eq!(rx.recv(), 2);
+/// ```
 pub struct Receiver<T> {
     ptr: QueuePtr<T>,
     local_head: usize,
@@ -23,6 +36,17 @@ impl<T> Receiver<T> {
     /// for available data in the queue. For control over the spin count, use
     /// [`Receiver::recv_with_spin_count`]. For a non-blocking alternative, use
     /// [`Receiver::try_recv`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(42);
+    /// assert_eq!(rx.recv(), 42);
+    /// ```
     pub fn recv(&mut self) -> T {
         self.recv_with_spin_count(16)
     }
@@ -36,6 +60,17 @@ impl<T> Receiver<T> {
     /// increasing latency.
     ///
     /// For a non-blocking alternative, use [`Receiver::try_recv`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(42);
+    /// assert_eq!(rx.recv_with_spin_count(64), 42);
+    /// ```
     pub fn recv_with_spin_count(&mut self, spin_count: u32) -> T {
         let next_head = self.local_head.wrapping_add(1);
 
@@ -58,10 +93,22 @@ impl<T> Receiver<T> {
 
     /// Attempts to receive a value from the queue without blocking.
     ///
-    /// # Returns
+    /// Returns `Some(value)` if a value is available, or `None` if the queue is empty.
     ///
-    /// * `Some(value)` if a value is available.
-    /// * `None` if the queue is empty.
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    ///
+    /// assert_eq!(rx.try_recv(), None);
+    ///
+    /// tx.send(42);
+    /// assert_eq!(rx.try_recv(), Some(42));
+    /// assert_eq!(rx.try_recv(), None);
+    /// ```
     pub fn try_recv(&mut self) -> Option<T> {
         let next_head = self.local_head.wrapping_add(1);
 

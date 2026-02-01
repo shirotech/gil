@@ -3,6 +3,42 @@
 //! This is the fastest queue variant, as it requires no atomic synchronization for the data buffer itself,
 //! only for the head and tail indices. It is inspired by the `ProducerConsumerQueue` in Facebook's Folly library.
 //!
+//! # Examples
+//!
+//! ```
+//! use std::thread;
+//! use core::num::NonZeroUsize;
+//! use gil::spsc::channel;
+//!
+//! let (mut tx, mut rx) = channel::<usize>(NonZeroUsize::new(1024).unwrap());
+//!
+//! thread::spawn(move || {
+//!     for i in 0..100 {
+//!         tx.send(i);
+//!     }
+//! });
+//!
+//! for i in 0..100 {
+//!     assert_eq!(rx.recv(), i);
+//! }
+//! ```
+//!
+//! ## Async
+//!
+//! Async support is available with the `async` feature flag. See [`Sender::send_async`]
+//! and [`Receiver::recv_async`].
+//!
+//! ```rust,ignore
+//! use core::num::NonZeroUsize;
+//! use gil::spsc::channel;
+//!
+//! // In an async context:
+//! let (mut tx, mut rx) = channel::<usize>(NonZeroUsize::new(1024).unwrap());
+//! tx.send_async(42).await;
+//! let value = rx.recv_async().await;
+//! assert_eq!(value, 42);
+//! ```
+//!
 //! # Performance
 //!
 //! **Improvements over original inspiration:**

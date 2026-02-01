@@ -6,6 +6,19 @@ use crate::{atomic::Ordering, spsc::queue::QueuePtr};
 ///
 /// This struct is `Send` but not `Sync` or `Clone`. It can be moved to another thread, but cannot be shared
 /// across threads.
+///
+/// # Examples
+///
+/// ```
+/// use core::num::NonZeroUsize;
+/// use gil::spsc::channel;
+///
+/// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+/// tx.send(1);
+/// tx.send(2);
+/// assert_eq!(rx.recv(), 1);
+/// assert_eq!(rx.recv(), 2);
+/// ```
 pub struct Sender<T> {
     ptr: QueuePtr<T>,
     local_head: usize,
@@ -23,10 +36,27 @@ impl<T> Sender<T> {
 
     /// Attempts to send a value into the queue without blocking.
     ///
-    /// # Returns
+    /// Returns `Ok(())` if the value was successfully enqueued, or `Err(value)` if the
+    /// queue is full, returning the original value.
     ///
-    /// * `true` if the value was successfully sent.
-    /// * `false` if the queue is full.
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(2).unwrap());
+    ///
+    /// assert!(tx.try_send(1).is_ok());
+    /// assert!(tx.try_send(2).is_ok());
+    ///
+    /// // Queue is full
+    /// assert_eq!(tx.try_send(3), Err(3));
+    ///
+    /// // After consuming, we can send again
+    /// assert_eq!(rx.try_recv(), Some(1));
+    /// assert!(tx.try_send(3).is_ok());
+    /// ```
     pub fn try_send(&mut self, value: T) -> Result<(), T> {
         let new_tail = self.local_tail.wrapping_add(1);
 
@@ -53,6 +83,17 @@ impl<T> Sender<T> {
     /// for available space in the queue. For control over the spin count, use
     /// [`Sender::send_with_spin_count`]. For a non-blocking alternative, use
     /// [`Sender::try_send`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(42);
+    /// assert_eq!(rx.recv(), 42);
+    /// ```
     pub fn send(&mut self, value: T) {
         self.send_with_spin_count(value, 128);
     }
@@ -66,6 +107,19 @@ impl<T> Sender<T> {
     /// increasing latency.
     ///
     /// For a non-blocking alternative, use [`Sender::try_send`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    ///
+    /// // Use a lower spin count to yield sooner under contention
+    /// tx.send_with_spin_count(42, 32);
+    /// assert_eq!(rx.recv(), 42);
+    /// ```
     pub fn send_with_spin_count(&mut self, value: T, spin_count: u32) {
         let new_tail = self.local_tail.wrapping_add(1);
 
@@ -85,7 +139,21 @@ impl<T> Sender<T> {
 
     /// Sends a value into the queue asynchronously.
     ///
-    /// This method yields the current task if the queue is full.
+    /// This method yields the current task if the queue is full, and resumes
+    /// when space becomes available.
+    ///
+    /// Requires the `async` feature.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send_async(42).await;
+    /// assert_eq!(rx.recv_async().await, 42);
+    /// ```
     #[cfg(feature = "async")]
     pub async fn send_async(&mut self, value: T) {
         use core::task::Poll;
@@ -119,21 +187,40 @@ impl<T> Sender<T> {
     /// Returns a mutable slice to the available write buffer in the queue.
     ///
     /// This allows writing multiple items directly into the queue's memory (zero-copy),
-    /// bypassing the per-item overhead of `send`.
+    /// bypassing the per-item overhead of [`send`](Sender::send).
     ///
-    /// After writing to the buffer, you must call [`Sender::commit`] to make the items visible
-    /// to the receiver.
+    /// After writing to the buffer, you must call [`commit`](Sender::commit) to make
+    /// the items visible to the receiver.
     ///
-    /// # Returns
+    /// The returned slice represents contiguous free space starting from the current tail.
+    /// It may not represent *all* free space if the buffer wraps around; call `write_buffer`
+    /// again after committing to get the next contiguous chunk.
     ///
-    /// A mutable slice representing the contiguous free space starting from the current tail.
-    /// Note that this might not represent *all* free space if the buffer wraps around.
+    /// The slice contains [`MaybeUninit<T>`] values. You can initialize them with
+    /// [`MaybeUninit::write`] or use [`copy_nonoverlapping`](core::ptr::copy_nonoverlapping)
+    /// for bulk copies.
     ///
-    /// # Usage
+    /// # Examples
     ///
-    /// It returns a slice of [`MaybeUninit`](core::mem::MaybeUninit) to prevent UB, you can use
-    /// [`copy_nonoverlapping`](core::ptr::copy_nonoverlapping) if you want fast copying between
-    /// this and your own data.
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<usize>(NonZeroUsize::new(128).unwrap());
+    ///
+    /// // Write a batch of items
+    /// let buf = tx.write_buffer();
+    /// let count = buf.len().min(5);
+    /// for i in 0..count {
+    ///     buf[i].write(i + 1);
+    /// }
+    /// unsafe { tx.commit(count) };
+    ///
+    /// // Read them back
+    /// for i in 0..count {
+    ///     assert_eq!(rx.recv(), i + 1);
+    /// }
+    /// ```
     pub fn write_buffer(&mut self) -> &mut [MaybeUninit<T>] {
         let mut available = self.ptr.size - self.local_tail.wrapping_sub(self.local_head);
 
@@ -152,13 +239,32 @@ impl<T> Sender<T> {
         }
     }
 
-    /// Commits items written to the buffer obtained via [`Sender::write_buffer`].
+    /// Commits items written to the buffer obtained via [`write_buffer`](Sender::write_buffer).
+    ///
+    /// This makes `len` items visible to the receiver.
     ///
     /// # Safety
     ///
-    /// * This function must only be called after writing data to the slice returned by [`Sender::write_buffer`].
-    /// * `len` must be less than or equal to the length of the slice returned by the most recent call to [`Sender::write_buffer`].
-    /// * Committing more items than available in the buffer slice will result in undefined behavior.
+    /// * `len` must be less than or equal to the length of the slice returned by the
+    ///   most recent call to [`write_buffer`](Sender::write_buffer).
+    /// * All `len` items in the buffer must have been initialized before calling this.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<usize>(NonZeroUsize::new(128).unwrap());
+    ///
+    /// let buf = tx.write_buffer();
+    /// buf[0].write(10);
+    /// buf[1].write(20);
+    /// unsafe { tx.commit(2) };
+    ///
+    /// assert_eq!(rx.recv(), 10);
+    /// assert_eq!(rx.recv(), 20);
+    /// ```
     #[inline(always)]
     pub unsafe fn commit(&mut self, len: usize) {
         #[cfg(debug_assertions)]

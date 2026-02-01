@@ -5,6 +5,27 @@ use crate::{atomic::Ordering, mpmc::queue::QueuePtr};
 /// The producer end of the MPMC queue.
 ///
 /// This struct is `Clone` and `Send`. It can be shared across threads by cloning it.
+///
+/// # Examples
+///
+/// ```
+/// use std::thread;
+/// use core::num::NonZeroUsize;
+/// use gil::mpmc::channel;
+///
+/// let (tx, mut rx) = channel::<i32>(NonZeroUsize::new(1024).unwrap());
+///
+/// let mut tx2 = tx.clone();
+/// thread::spawn(move || tx2.send(1));
+///
+/// let mut tx3 = tx.clone();
+/// thread::spawn(move || tx3.send(2));
+/// drop(tx);
+///
+/// let mut values = [rx.recv(), rx.recv()];
+/// values.sort();
+/// assert_eq!(values, [1, 2]);
+/// ```
 #[derive(Clone)]
 pub struct Sender<T> {
     ptr: QueuePtr<T>,
@@ -25,6 +46,17 @@ impl<T> Sender<T> {
     /// for available space in the queue. For control over the spin count, use
     /// [`Sender::send_with_spin_count`]. For a non-blocking alternative, use
     /// [`Sender::try_send`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpmc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(42);
+    /// assert_eq!(rx.recv(), 42);
+    /// ```
     pub fn send(&mut self, value: T) {
         self.send_with_spin_count(value, 128);
     }
@@ -38,6 +70,17 @@ impl<T> Sender<T> {
     /// increasing latency.
     ///
     /// For a non-blocking alternative, use [`Sender::try_send`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpmc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send_with_spin_count(42, 32);
+    /// assert_eq!(rx.recv(), 42);
+    /// ```
     pub fn send_with_spin_count(&mut self, value: T, spin_count: u32) {
         // fetch_add means we are the only ones who can access the cell at this idx
         let tail = self.ptr.tail().fetch_add(1, Ordering::Relaxed);
@@ -56,10 +99,23 @@ impl<T> Sender<T> {
 
     /// Attempts to send a value into the queue without blocking.
     ///
-    /// # Returns
+    /// Returns `Ok(())` if the value was successfully enqueued, or `Err(value)` if the
+    /// queue is full, returning the original value.
     ///
-    /// * `Ok(())` if the value was successfully sent.
-    /// * `Err(value)` if the queue is full, returning the original value.
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpmc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(2).unwrap());
+    ///
+    /// assert!(tx.try_send(1).is_ok());
+    /// assert!(tx.try_send(2).is_ok());
+    /// assert_eq!(tx.try_send(3), Err(3));
+    ///
+    /// assert_eq!(rx.recv(), 1);
+    /// ```
     pub fn try_send(&mut self, value: T) -> Result<(), T> {
         let mut backoff = crate::Backoff::with_spin_count(16);
 

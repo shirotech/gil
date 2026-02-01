@@ -4,6 +4,30 @@
 //! This structure allows for high throughput when multiple threads are sending concurrently,
 //! as they will each use a different shard.
 //!
+//! # Examples
+//!
+//! ```
+//! use std::thread;
+//! use core::num::NonZeroUsize;
+//! use gil::mpsc::sharded::channel;
+//!
+//! let (mut tx, mut rx) = channel::<usize>(
+//!     NonZeroUsize::new(4).unwrap(),   // 4 shards
+//!     NonZeroUsize::new(256).unwrap(), // 256 capacity per shard
+//! );
+//!
+//! // Each clone binds to a different shard
+//! let mut tx2 = tx.clone().expect("shard available");
+//! let h = thread::spawn(move || tx2.send(1));
+//!
+//! tx.send(2);
+//!
+//! let mut values = [rx.recv(), rx.recv()];
+//! values.sort();
+//! assert_eq!(values, [1, 2]);
+//! h.join().unwrap();
+//! ```
+//!
 //! # Performance Implications
 //!
 //! **Sharded vs. Normal MPSC:**
@@ -49,6 +73,18 @@ pub use sender::Sender;
 /// # Returns
 ///
 /// A tuple containing a [`Sender`] and a [`Receiver`].
+///
+/// # Examples
+///
+/// ```
+/// use core::num::NonZeroUsize;
+/// use gil::mpsc::sharded::channel;
+///
+/// let (tx, rx) = channel::<usize>(
+///     NonZeroUsize::new(4).unwrap(),
+///     NonZeroUsize::new(256).unwrap(),
+/// );
+/// ```
 pub fn channel<T>(
     max_shards: NonZeroUsize,
     capacity_per_shard: NonZeroUsize,

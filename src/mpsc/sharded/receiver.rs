@@ -5,7 +5,23 @@ use crate::{
 
 /// The receiving half of a sharded MPSC channel.
 ///
-/// The receiver attempts to read from shards in a round-robin fashion.
+/// The receiver polls all shards in round-robin fashion, returning the first available item.
+///
+/// # Examples
+///
+/// ```
+/// use core::num::NonZeroUsize;
+/// use gil::mpsc::sharded::channel;
+///
+/// let (mut tx, mut rx) = channel::<i32>(
+///     NonZeroUsize::new(1).unwrap(),
+///     NonZeroUsize::new(16).unwrap(),
+/// );
+/// tx.send(1);
+/// tx.send(2);
+/// assert_eq!(rx.recv(), 1);
+/// assert_eq!(rx.recv(), 2);
+/// ```
 pub struct Receiver<T> {
     receivers: Box<[spsc::Receiver<T>]>,
     max_shards: usize,
@@ -33,6 +49,20 @@ impl<T> Receiver<T> {
     /// This method will block (spin) with a default spin count of 128 until a
     /// value is available in any of the shards. For control over the spin count,
     /// use [`Receiver::recv_with_spin_count`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpsc::sharded::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(
+    ///     NonZeroUsize::new(1).unwrap(),
+    ///     NonZeroUsize::new(16).unwrap(),
+    /// );
+    /// tx.send(42);
+    /// assert_eq!(rx.recv(), 42);
+    /// ```
     pub fn recv(&mut self) -> T {
         self.recv_with_spin_count(128)
     }
@@ -44,6 +74,20 @@ impl<T> Receiver<T> {
     /// latency when the queue is expected to fill quickly, at the cost of higher CPU
     /// usage. A lower value yields sooner, reducing CPU usage but potentially
     /// increasing latency.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpsc::sharded::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(
+    ///     NonZeroUsize::new(1).unwrap(),
+    ///     NonZeroUsize::new(16).unwrap(),
+    /// );
+    /// tx.send(42);
+    /// assert_eq!(rx.recv_with_spin_count(32), 42);
+    /// ```
     pub fn recv_with_spin_count(&mut self, spin_count: u32) -> T {
         let mut backoff = Backoff::with_spin_count(spin_count);
         loop {
@@ -56,7 +100,25 @@ impl<T> Receiver<T> {
 
     /// Attempts to receive a value from the channel without blocking.
     ///
-    /// Returns `Some(value)` if a value was received, or `None` if all shards are empty.
+    /// Returns `Some(value)` if a value was received from any shard, or `None` if all
+    /// shards are empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpsc::sharded::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(
+    ///     NonZeroUsize::new(1).unwrap(),
+    ///     NonZeroUsize::new(16).unwrap(),
+    /// );
+    ///
+    /// assert_eq!(rx.try_recv(), None);
+    ///
+    /// tx.send(42);
+    /// assert_eq!(rx.try_recv(), Some(42));
+    /// ```
     pub fn try_recv(&mut self) -> Option<T> {
         let start = self.next_shard;
         loop {
@@ -79,7 +141,28 @@ impl<T> Receiver<T> {
 
     /// Returns a slice of the internal read buffer from one of the shards.
     ///
-    /// If no elements are available in any shard, an empty slice is returned.
+    /// If no elements are available in any shard, an empty slice is returned. After
+    /// reading, call [`advance`](Receiver::advance) to mark items as consumed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpsc::sharded::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<usize>(
+    ///     NonZeroUsize::new(1).unwrap(),
+    ///     NonZeroUsize::new(128).unwrap(),
+    /// );
+    ///
+    /// tx.send(10);
+    /// tx.send(20);
+    ///
+    /// let buf = rx.read_buffer();
+    /// assert_eq!(buf.len(), 2);
+    /// let count = buf.len();
+    /// unsafe { rx.advance(count) };
+    /// ```
     pub fn read_buffer(&mut self) -> &[T] {
         let start = self.next_shard;
         loop {
@@ -100,12 +183,31 @@ impl<T> Receiver<T> {
         }
     }
 
-    /// Advances the read pointer of the last shard accessed by `read_buffer`.
+    /// Advances the read pointer of the last shard accessed by [`read_buffer`](Receiver::read_buffer).
     ///
     /// # Safety
     ///
     /// The caller must ensure that `len` is less than or equal to the length of the slice
-    /// returned by the last call to `read_buffer`.
+    /// returned by the last call to [`read_buffer`](Receiver::read_buffer).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpsc::sharded::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<usize>(
+    ///     NonZeroUsize::new(1).unwrap(),
+    ///     NonZeroUsize::new(128).unwrap(),
+    /// );
+    ///
+    /// tx.send(10);
+    /// let buf = rx.read_buffer();
+    /// assert_eq!(buf, &[10]);
+    /// unsafe { rx.advance(1) };
+    ///
+    /// assert_eq!(rx.try_recv(), None);
+    /// ```
     pub unsafe fn advance(&mut self, len: usize) {
         unsafe { self.receivers[self.next_shard].advance(len) };
     }

@@ -2,6 +2,28 @@
 //!
 //! This queue is an adaptation of Dmitry Vyukov's bounded MPMC queue, optimized for a single consumer.
 //!
+//! # Examples
+//!
+//! ```
+//! use std::thread;
+//! use core::num::NonZeroUsize;
+//! use gil::mpsc::channel;
+//!
+//! let (tx, mut rx) = channel::<usize>(NonZeroUsize::new(1024).unwrap());
+//!
+//! for _ in 0..4 {
+//!     let mut tx = tx.clone();
+//!     thread::spawn(move || {
+//!         tx.send(42);
+//!     });
+//! }
+//! drop(tx);
+//!
+//! for _ in 0..4 {
+//!     assert_eq!(rx.recv(), 42);
+//! }
+//! ```
+//!
 //! # Performance
 //!
 //! **Improvements over standard implementations:**

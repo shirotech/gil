@@ -3,6 +3,30 @@
 //! This queue is based on the bounded MPMC queue algorithm by Dmitry Vyukov.
 //! It provides high throughput and low latency for concurrent message passing.
 //!
+//! # Examples
+//!
+//! ```
+//! use std::thread;
+//! use core::num::NonZeroUsize;
+//! use gil::mpmc::channel;
+//!
+//! let (tx, mut rx) = channel::<usize>(NonZeroUsize::new(1024).unwrap());
+//!
+//! // Multiple producers
+//! let mut tx2 = tx.clone();
+//! let h1 = thread::spawn(move || tx2.send(1));
+//! let mut tx3 = tx.clone();
+//! let h2 = thread::spawn(move || tx3.send(2));
+//! drop(tx);
+//!
+//! let mut values = [rx.recv(), rx.recv()];
+//! values.sort();
+//! assert_eq!(values, [1, 2]);
+//!
+//! h1.join().unwrap();
+//! h2.join().unwrap();
+//! ```
+//!
 //! # Performance
 //!
 //! **Improvements over original implementation:**

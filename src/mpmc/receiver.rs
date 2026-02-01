@@ -3,6 +3,27 @@ use crate::{atomic::Ordering, mpmc::queue::QueuePtr};
 /// The consumer end of the MPMC queue.
 ///
 /// This struct is `Clone` and `Send`. It can be shared across threads by cloning it.
+///
+/// # Examples
+///
+/// ```
+/// use std::thread;
+/// use core::num::NonZeroUsize;
+/// use gil::mpmc::channel;
+///
+/// let (tx, mut rx) = channel::<i32>(NonZeroUsize::new(1024).unwrap());
+///
+/// let mut tx2 = tx.clone();
+/// thread::spawn(move || tx2.send(1));
+/// let mut tx3 = tx.clone();
+/// thread::spawn(move || tx3.send(2));
+/// drop(tx);
+///
+/// let mut rx2 = rx.clone();
+/// let a = rx.recv();
+/// let b = rx2.recv();
+/// assert_eq!(a + b, 3);
+/// ```
 #[derive(Clone)]
 pub struct Receiver<T> {
     ptr: QueuePtr<T>,
@@ -23,6 +44,17 @@ impl<T> Receiver<T> {
     /// for available data in the queue. For control over the spin count, use
     /// [`Receiver::recv_with_spin_count`]. For a non-blocking alternative, use
     /// [`Receiver::try_recv`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpmc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(42);
+    /// assert_eq!(rx.recv(), 42);
+    /// ```
     pub fn recv(&mut self) -> T {
         self.recv_with_spin_count(128)
     }
@@ -36,6 +68,17 @@ impl<T> Receiver<T> {
     /// increasing latency.
     ///
     /// For a non-blocking alternative, use [`Receiver::try_recv`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpmc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(42);
+    /// assert_eq!(rx.recv_with_spin_count(32), 42);
+    /// ```
     pub fn recv_with_spin_count(&mut self, spin_count: u32) -> T {
         let head = self.ptr.head().fetch_add(1, Ordering::Relaxed);
         let next = head.wrapping_add(1);
@@ -56,10 +99,22 @@ impl<T> Receiver<T> {
 
     /// Attempts to receive a value from the queue without blocking.
     ///
-    /// # Returns
+    /// Returns `Some(value)` if a value is available, or `None` if the queue is empty.
     ///
-    /// * `Some(value)` if a value is available.
-    /// * `None` if the queue is empty.
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::mpmc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    ///
+    /// assert_eq!(rx.try_recv(), None);
+    ///
+    /// tx.send(42);
+    /// assert_eq!(rx.try_recv(), Some(42));
+    /// assert_eq!(rx.try_recv(), None);
+    /// ```
     pub fn try_recv(&mut self) -> Option<T> {
         use core::cmp::Ordering as Cmp;
 

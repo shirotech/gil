@@ -8,6 +8,23 @@ use crate::{atomic::Ordering, spmc::queue::QueuePtr};
 ///
 /// This struct is `Send` but not `Sync`. It can be moved to another thread, but cannot be shared
 /// across threads without cloning.
+///
+/// # Examples
+///
+/// ```
+/// use core::num::NonZeroUsize;
+/// use gil::spmc::channel;
+///
+/// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+/// let mut rx2 = rx.clone();
+///
+/// tx.send(1);
+/// tx.send(2);
+///
+/// let a = rx.recv();
+/// let b = rx2.recv();
+/// assert_eq!(a + b, 3);
+/// ```
 pub struct Receiver<T> {
     ptr: QueuePtr<T>,
     local_head: usize,
@@ -30,6 +47,17 @@ impl<T> Receiver<T> {
     ///
     /// When multiple receivers exist, each call to `recv` competes with other receivers.
     /// Exactly one receiver will get each item.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spmc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(42);
+    /// assert_eq!(rx.recv(), 42);
+    /// ```
     pub fn recv(&mut self) -> T {
         self.recv_with_spin_count(128)
     }
@@ -46,6 +74,17 @@ impl<T> Receiver<T> {
     /// Exactly one receiver will get each item.
     ///
     /// For a non-blocking alternative, use [`Receiver::try_recv`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spmc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(42);
+    /// assert_eq!(rx.recv_with_spin_count(32), 42);
+    /// ```
     pub fn recv_with_spin_count(&mut self, spin_count: u32) -> T {
         let head = self.ptr.head().fetch_add(1, Ordering::Relaxed);
         let next_head = head.wrapping_add(1);
@@ -65,10 +104,23 @@ impl<T> Receiver<T> {
 
     /// Attempts to receive a value from the queue without blocking.
     ///
-    /// # Returns
+    /// Returns `Some(value)` if a value was successfully received, or `None` if the queue
+    /// is empty or another receiver claimed the item.
     ///
-    /// * `Some(value)` if a value was successfully received.
-    /// * `None` if the queue is empty or another receiver claimed the item.
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spmc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    ///
+    /// assert_eq!(rx.try_recv(), None);
+    ///
+    /// tx.send(42);
+    /// assert_eq!(rx.try_recv(), Some(42));
+    /// assert_eq!(rx.try_recv(), None);
+    /// ```
     pub fn try_recv(&mut self) -> Option<T> {
         use core::cmp::Ordering as Cmp;
 

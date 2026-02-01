@@ -4,6 +4,19 @@ use crate::{atomic::Ordering, spsc::queue::QueuePtr};
 ///
 /// This struct is `Send` but not `Sync` or `Clone`. It can be moved to another thread, but cannot be shared
 /// across threads.
+///
+/// # Examples
+///
+/// ```
+/// use core::num::NonZeroUsize;
+/// use gil::spsc::channel;
+///
+/// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+/// tx.send(1);
+/// tx.send(2);
+/// assert_eq!(rx.recv(), 1);
+/// assert_eq!(rx.recv(), 2);
+/// ```
 pub struct Receiver<T> {
     ptr: QueuePtr<T>,
     local_tail: usize,
@@ -30,10 +43,22 @@ impl<T> Receiver<T> {
 
     /// Attempts to receive a value from the queue without blocking.
     ///
-    /// # Returns
+    /// Returns `Some(value)` if a value is available, or `None` if the queue is empty.
     ///
-    /// * `Some(value)` if a value is available.
-    /// * `None` if the queue is empty.
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    ///
+    /// assert_eq!(rx.try_recv(), None);
+    ///
+    /// tx.send(42);
+    /// assert_eq!(rx.try_recv(), Some(42));
+    /// assert_eq!(rx.try_recv(), None);
+    /// ```
     pub fn try_recv(&mut self) -> Option<T> {
         if self.local_head == self.local_tail {
             self.load_tail();
@@ -61,6 +86,17 @@ impl<T> Receiver<T> {
     /// for available data in the queue. For control over the spin count, use
     /// [`Receiver::recv_with_spin_count`]. For a non-blocking alternative, use
     /// [`Receiver::try_recv`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(42);
+    /// assert_eq!(rx.recv(), 42);
+    /// ```
     pub fn recv(&mut self) -> T {
         self.recv_with_spin_count(128)
     }
@@ -74,6 +110,19 @@ impl<T> Receiver<T> {
     /// increasing latency.
     ///
     /// For a non-blocking alternative, use [`Receiver::try_recv`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(42);
+    ///
+    /// // Use a lower spin count to yield sooner under contention
+    /// assert_eq!(rx.recv_with_spin_count(32), 42);
+    /// ```
     pub fn recv_with_spin_count(&mut self, spin_count: u32) -> T {
         let mut backoff = crate::Backoff::with_spin_count(spin_count);
         while self.local_head == self.local_tail {
@@ -96,7 +145,21 @@ impl<T> Receiver<T> {
 
     /// Receives a value from the queue asynchronously.
     ///
-    /// This method yields the current task if the queue is empty.
+    /// This method yields the current task if the queue is empty, and resumes
+    /// when data becomes available.
+    ///
+    /// Requires the `async` feature.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send_async(42).await;
+    /// assert_eq!(rx.recv_async().await, 42);
+    /// ```
     #[cfg(feature = "async")]
     pub async fn recv_async(&mut self) -> T {
         use core::task::Poll;
@@ -130,17 +193,38 @@ impl<T> Receiver<T> {
         ret
     }
 
-    /// Returns a slice to the available read buffer in the queue.
+    /// Returns a slice of the available read buffer in the queue.
     ///
     /// This allows reading multiple items directly from the queue's memory (zero-copy),
-    /// bypassing the per-item overhead of `recv`.
+    /// bypassing the per-item overhead of [`recv`](Receiver::recv).
     ///
-    /// After reading from the buffer, you must call [`Receiver::advance`] to mark the items as consumed.
+    /// After reading from the buffer, you must call [`advance`](Receiver::advance) to
+    /// mark the items as consumed.
     ///
-    /// # Returns
+    /// The returned slice contains contiguous available items starting from the current head.
+    /// It may not represent *all* available items if the buffer wraps around; call
+    /// `read_buffer` again after advancing to get the next contiguous chunk.
     ///
-    /// A slice containing available items starting from the current head.
-    /// Note that this might not represent *all* available items if the buffer wraps around.
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<usize>(NonZeroUsize::new(128).unwrap());
+    ///
+    /// for i in 0..5 {
+    ///     tx.send(i);
+    /// }
+    ///
+    /// let buf = rx.read_buffer();
+    /// assert_eq!(buf.len(), 5);
+    /// assert_eq!(buf[0], 0);
+    /// assert_eq!(buf[4], 4);
+    ///
+    /// let count = buf.len();
+    /// unsafe { rx.advance(count) };
+    /// ```
     pub fn read_buffer(&mut self) -> &[T] {
         let mut available = self.local_tail.wrapping_sub(self.local_head);
 
@@ -161,13 +245,34 @@ impl<T> Receiver<T> {
 
     /// Advances the consumer head by `len` items.
     ///
-    /// This should be called after processing items obtained via [`Receiver::read_buffer`].
+    /// This marks items previously obtained via [`read_buffer`](Receiver::read_buffer)
+    /// as consumed, freeing space for the producer.
     ///
     /// # Safety
     ///
-    /// * This function must only be called after reading data from the slice returned by [`Receiver::read_buffer`].
-    /// * `len` must be less than or equal to the length of the slice returned by the most recent call to [`Receiver::read_buffer`].
-    /// * Advancing past the available data in the buffer results in undefined behavior.
+    /// * `len` must be less than or equal to the length of the slice returned by the
+    ///   most recent call to [`read_buffer`](Receiver::read_buffer).
+    /// * Advancing past the available data results in undefined behavior.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::channel;
+    ///
+    /// let (mut tx, mut rx) = channel::<usize>(NonZeroUsize::new(128).unwrap());
+    ///
+    /// tx.send(10);
+    /// tx.send(20);
+    ///
+    /// let buf = rx.read_buffer();
+    /// assert_eq!(buf, &[10, 20]);
+    /// let len = buf.len();
+    /// unsafe { rx.advance(len) };
+    ///
+    /// // Buffer is now empty
+    /// assert_eq!(rx.try_recv(), None);
+    /// ```
     #[inline(always)]
     pub unsafe fn advance(&mut self, len: usize) {
         #[cfg(debug_assertions)]

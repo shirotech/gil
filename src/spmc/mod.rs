@@ -2,6 +2,24 @@
 //!
 //! This queue is an adaptation of Dmitry Vyukov's bounded MPMC queue, optimized for a single producer.
 //!
+//! # Examples
+//!
+//! ```
+//! use std::thread;
+//! use core::num::NonZeroUsize;
+//! use gil::spmc::channel;
+//!
+//! let (mut tx, mut rx) = channel::<usize>(NonZeroUsize::new(1024).unwrap());
+//! let mut rx2 = rx.clone();
+//!
+//! tx.send(1);
+//! tx.send(2);
+//!
+//! let a = rx.recv();
+//! let b = rx2.recv();
+//! assert_eq!(a + b, 3);
+//! ```
+//!
 //! # Performance
 //!
 //! **Improvements over standard implementations:**
@@ -44,6 +62,15 @@ mod sender;
 /// # Returns
 ///
 /// A tuple containing the [`Sender`] and [`Receiver`] handles.
+///
+/// # Examples
+///
+/// ```
+/// use core::num::NonZeroUsize;
+/// use gil::spmc::channel;
+///
+/// let (tx, rx) = channel::<usize>(NonZeroUsize::new(1024).unwrap());
+/// ```
 pub fn channel<T>(capacity: NonZeroUsize) -> (Sender<T>, Receiver<T>) {
     let queue = queue::QueuePtr::with_size(capacity);
     queue.initialize::<queue::Initializer<T>>();
