@@ -14,6 +14,15 @@
 //! It typically outperforms a general-purpose MPMC queue in this scenario because the consumer
 //! does not need to contend with other consumers.
 //!
+//! # Gotchas
+//!
+//! - **Cloneability:** [`Sender`] implements `Clone`, but [`Receiver`] does not. Clone senders to
+//!   distribute to multiple producer threads.
+//! - **No Async:** Unlike SPSC, this queue does not have async support.
+//! - **No Batch Operations:** The non-sharded variant does not support batch operations. Use
+//!   [`sharded`] if you need zero-copy batch operations.
+//! - **Capacity Rounding:** The actual capacity is rounded up to the next power of two.
+//!
 //! # Reference
 //!
 //! * Adapted from [Dmitry Vyukov's Bounded MPMC Queue](http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue)

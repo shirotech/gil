@@ -18,6 +18,14 @@
 //!     *   **Memory:** Higher memory usage due to multiple buffers.
 //!     *   **Ordering:** Messages are FIFO within a shard, but there is no strict ordering between messages
 //!         sent to different shards.
+//!
+//! # Gotchas
+//!
+//! - **Fallible Clone:** `Sender::clone()` returns `Option<Sender>`. It returns `None` if all shards
+//!   are already occupied. Always handle this case in production code.
+//! - **Power of Two:** `max_shards` must be a power of two.
+//! - **Batch Operations:** This variant supports batch operations via `write_buffer`/`commit` and
+//!   `read_buffer`/`advance`.
 
 use core::num::NonZeroUsize;
 
@@ -25,6 +33,9 @@ use crate::spsc::shards::ShardsPtr;
 
 mod receiver;
 mod sender;
+
+pub use receiver::Receiver;
+pub use sender::Sender;
 
 /// Creates a new sharded multi-producer single-consumer channel.
 ///

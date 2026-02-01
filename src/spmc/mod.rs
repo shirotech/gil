@@ -13,6 +13,14 @@
 //! Use this queue when you have a single thread distributing work to multiple consumer threads.
 //! It avoids the overhead of multi-producer synchronization.
 //!
+//! # Gotchas
+//!
+//! - **Cloneability:** [`Receiver`] implements `Clone`, but [`Sender`] does not. This is the
+//!   opposite of MPSC. Clone receivers to distribute to multiple consumer threads.
+//! - **No Async:** Unlike SPSC, this queue does not have async support.
+//! - **No Batch Operations:** This queue does not support batch operations.
+//! - **Capacity Rounding:** The actual capacity is rounded up to the next power of two.
+//!
 //! # Reference
 //!
 //! * Adapted from [Dmitry Vyukov's Bounded MPMC Queue](http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue)

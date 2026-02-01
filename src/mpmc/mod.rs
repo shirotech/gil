@@ -17,6 +17,15 @@
 //! receiving messages. If you only have a single consumer, consider using [`mpsc::channel`](crate::mpsc::channel)
 //! for potentially better performance.
 //!
+//! # Gotchas
+//!
+//! - **Cloneability:** Both [`Sender`] and [`Receiver`] implement `Clone`. Clone them to distribute
+//!   to multiple producer and consumer threads.
+//! - **No Async:** Unlike SPSC, this queue does not have async support.
+//! - **No Batch Operations:** The non-sharded variant does not support batch operations. Use
+//!   [`sharded`] if you need zero-copy batch operations.
+//! - **Capacity Rounding:** The actual capacity is rounded up to the next power of two.
+//!
 //! # Reference
 //!
 //! * [Dmitry Vyukov's Bounded MPMC Queue](http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue)

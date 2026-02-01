@@ -15,6 +15,15 @@
 //!
 //! Use this queue for 1-to-1 thread communication. It offers the best possible throughput and latency.
 //!
+//! # Gotchas
+//!
+//! - **Not Cloneable:** Neither [`Sender`] nor [`Receiver`] implement `Clone`. They are `Send` but not
+//!   `Sync`, so they can be moved to another thread but not shared.
+//! - **Async Support:** This is the only queue variant with async support (`send_async`/`recv_async`).
+//!   Enable the `async` feature to use it.
+//! - **Batch Operations:** Use [`Sender::write_buffer`]/[`Sender::commit`] and
+//!   [`Receiver::read_buffer`]/[`Receiver::advance`] for zero-copy batch operations.
+//!
 //! # Reference
 //!
 //! * [Facebook Folly ProducerConsumerQueue](https://github.com/facebook/folly/blob/main/folly/ProducerConsumerQueue.h)

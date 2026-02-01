@@ -19,6 +19,17 @@
 //!     *   **Bounded Concurrency:** The number of active senders and receivers is bounded by the number of shards.
 //!         Operations like `clone()` will fail if all shards are occupied.
 //!     *   **Fairness:** Strict global FIFO ordering is not guaranteed; ordering is preserved only within each shard.
+//!
+//! # Gotchas
+//!
+//! - **Fallible Clone:** `Sender::try_clone()` and `Receiver::try_clone()` return `Option`. They return
+//!   `None` if all shards are already occupied. Always handle this case in production code.
+//! - **Power of Two:** `max_shards` must be a power of two.
+//! - **ReadGuard Locking:** `Receiver::read_buffer()` returns a [`ReadGuard`] that holds an internal lock
+//!   on the shard. The lock is released when the guard is dropped. Holding the guard for too long will
+//!   block other receivers from accessing that shard.
+//! - **Batch Operations:** This variant supports batch operations. Use `ReadGuard::advance()` to mark
+//!   items as consumed before dropping the guard.
 
 use core::num::NonZeroUsize;
 

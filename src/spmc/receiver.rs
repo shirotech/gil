@@ -1,5 +1,13 @@
 use crate::{atomic::Ordering, spmc::queue::QueuePtr};
 
+/// The consumer end of the SPMC queue.
+///
+/// Unlike SPSC receivers, this struct implements `Clone`, allowing multiple consumers to receive
+/// from the same queue. Each consumer competes for items - an item will be received by exactly
+/// one consumer.
+///
+/// This struct is `Send` but not `Sync`. It can be moved to another thread, but cannot be shared
+/// across threads without cloning.
 pub struct Receiver<T> {
     ptr: QueuePtr<T>,
     local_head: usize,
@@ -13,6 +21,13 @@ impl<T> Receiver<T> {
         }
     }
 
+    /// Receives a value from the queue, blocking if necessary.
+    ///
+    /// This method uses a spin loop to wait for a value to become available.
+    /// For a non-blocking alternative, use [`Receiver::try_recv`].
+    ///
+    /// When multiple receivers exist, each call to `recv` competes with other receivers.
+    /// Exactly one receiver will get each item.
     pub fn recv(&mut self) -> T {
         let head = self.ptr.head().fetch_add(1, Ordering::Relaxed);
         let next_head = head.wrapping_add(1);
@@ -30,6 +45,12 @@ impl<T> Receiver<T> {
         ret
     }
 
+    /// Attempts to receive a value from the queue without blocking.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(value)` if a value was successfully received.
+    /// * `None` if the queue is empty or another receiver claimed the item.
     pub fn try_recv(&mut self) -> Option<T> {
         use core::cmp::Ordering as Cmp;
 

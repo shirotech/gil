@@ -125,9 +125,11 @@ assert_eq!(value, 42);
 
 To use async features, enable the `async` feature in your `Cargo.toml`.
 
+> **Note:** Async support (`send_async`/`recv_async`) is currently only available for SPSC queues.
+
 ```toml
 [dependencies]
-gil = { version = "0.3", features = ["async"] }
+gil = { version = "0.5", features = ["async"] }
 ```
 
 ```rust,ignore
