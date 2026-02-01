@@ -30,9 +30,22 @@ impl<T> Receiver<T> {
 
     /// Receives a value from the channel.
     ///
-    /// This method will block (spin) until a value is available in any of the shards.
+    /// This method will block (spin) with a default spin count of 128 until a
+    /// value is available in any of the shards. For control over the spin count,
+    /// use [`Receiver::recv_with_spin_count`].
     pub fn recv(&mut self) -> T {
-        let mut backoff = Backoff::with_spin_count(128);
+        self.recv_with_spin_count(128)
+    }
+
+    /// Receives a value from the channel, using a custom spin count.
+    ///
+    /// The `spin_count` controls how many times the backoff spins before yielding
+    /// the thread. A higher value keeps the thread spinning longer, which can reduce
+    /// latency when the queue is expected to fill quickly, at the cost of higher CPU
+    /// usage. A lower value yields sooner, reducing CPU usage but potentially
+    /// increasing latency.
+    pub fn recv_with_spin_count(&mut self, spin_count: u32) -> T {
+        let mut backoff = Backoff::with_spin_count(spin_count);
         loop {
             match self.try_recv() {
                 None => backoff.backoff(),

@@ -49,12 +49,27 @@ impl<T> Sender<T> {
 
     /// Sends a value into the queue, blocking if necessary.
     ///
-    /// This method uses a spin loop to wait for available space in the queue.
-    /// For a non-blocking alternative, use [`Sender::try_send`].
+    /// This method uses a spin loop with a default spin count of 128 to wait
+    /// for available space in the queue. For control over the spin count, use
+    /// [`Sender::send_with_spin_count`]. For a non-blocking alternative, use
+    /// [`Sender::try_send`].
     pub fn send(&mut self, value: T) {
+        self.send_with_spin_count(value, 128);
+    }
+
+    /// Sends a value into the queue, blocking if necessary, using a custom spin count.
+    ///
+    /// The `spin_count` controls how many times the backoff spins before yielding
+    /// the thread. A higher value keeps the thread spinning longer, which can reduce
+    /// latency when the queue is expected to drain quickly, at the cost of higher CPU
+    /// usage. A lower value yields sooner, reducing CPU usage but potentially
+    /// increasing latency.
+    ///
+    /// For a non-blocking alternative, use [`Sender::try_send`].
+    pub fn send_with_spin_count(&mut self, value: T, spin_count: u32) {
         let new_tail = self.local_tail.wrapping_add(1);
 
-        let mut backoff = crate::Backoff::with_spin_count(128);
+        let mut backoff = crate::Backoff::with_spin_count(spin_count);
         while new_tail > self.max_tail() {
             backoff.backoff();
             self.load_head();

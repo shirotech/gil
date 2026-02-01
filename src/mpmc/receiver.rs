@@ -19,15 +19,30 @@ impl<T> Receiver<T> {
 
     /// Receives a value from the queue, blocking if necessary.
     ///
-    /// This method uses a spin loop to wait for available data in the queue.
-    /// For a non-blocking alternative, use [`Receiver::try_recv`].
+    /// This method uses a spin loop with a default spin count of 128 to wait
+    /// for available data in the queue. For control over the spin count, use
+    /// [`Receiver::recv_with_spin_count`]. For a non-blocking alternative, use
+    /// [`Receiver::try_recv`].
     pub fn recv(&mut self) -> T {
+        self.recv_with_spin_count(128)
+    }
+
+    /// Receives a value from the queue, blocking if necessary, using a custom spin count.
+    ///
+    /// The `spin_count` controls how many times the backoff spins before yielding
+    /// the thread. A higher value keeps the thread spinning longer, which can reduce
+    /// latency when the queue is expected to fill quickly, at the cost of higher CPU
+    /// usage. A lower value yields sooner, reducing CPU usage but potentially
+    /// increasing latency.
+    ///
+    /// For a non-blocking alternative, use [`Receiver::try_recv`].
+    pub fn recv_with_spin_count(&mut self, spin_count: u32) -> T {
         let head = self.ptr.head().fetch_add(1, Ordering::Relaxed);
         let next = head.wrapping_add(1);
         self.local_head = next;
 
         let cell = self.ptr.cell_at(head);
-        let mut backoff = crate::Backoff::with_spin_count(128);
+        let mut backoff = crate::Backoff::with_spin_count(spin_count);
         while cell.epoch().load(Ordering::Acquire) != next {
             backoff.backoff();
         }
