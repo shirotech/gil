@@ -19,9 +19,9 @@ loom = { version = "0.7.2", optional = true }
 
 [features]
 default = ["std"]
-loom = ["dep:loom", "std"]
+std = []
 async = ["dep:futures"]
-std = ["futures/std"]
+async-std = ["async", "std", "futures/std"]
 
 [[example]]
 name = "spsc_test"

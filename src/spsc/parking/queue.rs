@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 
 use crate::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
     padded::Padded,
     std_cell::UnsafeCell,
     thread::Thread,
@@ -30,6 +30,7 @@ impl<T> crate::DropInitItems<Head, Tail, T> for GetInit {
         _capacity: usize,
         at: impl Fn(usize) -> NonNull<T>,
     ) {
+        let x = AtomicU32::new(0);
         if !core::mem::needs_drop::<T>() {
             return;
         }
