@@ -1,16 +1,18 @@
-//! CPU-efficient SPSC variant that parks the thread when idle.
+//! CPU-efficient SPSC variant that parks threads when idle.
 //!
-//! This uses the same ring buffer design as [`super::channel`] but adds
-//! thread parking: after a configurable spin + yield phase the receiver
-//! thread is parked via [`std::thread::park`], and the sender calls
-//! [`Thread::unpark`](std::thread::Thread::unpark) after each write.
+//! Same ring buffer as [`super::channel`] but both the sender and receiver
+//! will park their thread (via [`std::thread::park`]) after exhausting a
+//! spin + yield backoff phase. The other side calls
+//! [`Thread::unpark`](std::thread::Thread::unpark) after each write or
+//! consume to wake it.
 //!
-//! The trade-off compared to the regular SPSC channel is higher wakeup
-//! latency (microseconds instead of nanoseconds) in exchange for near-zero
-//! CPU usage when the queue is idle.
+//! A single shared parking slot is used since sender and receiver parking
+//! are mutually exclusive: if the queue is full the sender parks (receiver
+//! can't be blocked — there's data), and if empty the receiver parks
+//! (sender can't be blocked — there's space).
 //!
-//! The sender's fast path when no receiver is parked is a single
-//! `Relaxed` atomic load — the same cost as a regular memory read on x86.
+//! The unpark fast path when nobody is parked is a single `Relaxed` atomic
+//! load.
 //!
 //! # Examples
 //!
@@ -43,6 +45,17 @@ mod sender;
 /// Creates a new parking SPSC channel.
 ///
 /// See the [module-level documentation](self) for details.
+///
+/// # Examples
+///
+/// ```
+/// use core::num::NonZeroUsize;
+/// use gil::spsc::parking;
+///
+/// let (mut tx, mut rx) = parking::channel::<i32>(NonZeroUsize::new(16).unwrap());
+/// tx.send(42);
+/// assert_eq!(rx.recv(), 42);
+/// ```
 pub fn channel<T>(capacity: NonZeroUsize) -> (Sender<T>, Receiver<T>) {
     let queue = queue::QueuePtr::with_size(capacity);
     (Sender::new(queue.clone()), Receiver::new(queue))
@@ -100,5 +113,24 @@ mod test {
         tx.send(42);
 
         assert_eq!(h.join().unwrap(), 42);
+    }
+
+    #[test]
+    fn parking_send_wakes() {
+        // Queue of 1 — sender will park immediately on second send
+        let (mut tx, mut rx) = channel::<usize>(NonZeroUsize::new(1).unwrap());
+        tx.send(0); // fill the queue
+
+        let h = thread::spawn(move || {
+            tx.send(1); // should park until receiver consumes
+            tx.send(2);
+        });
+
+        thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(rx.recv(), 0);
+        assert_eq!(rx.recv(), 1);
+        assert_eq!(rx.recv(), 2);
+
+        h.join().unwrap();
     }
 }

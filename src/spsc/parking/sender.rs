@@ -6,9 +6,18 @@ use super::queue::QueuePtr;
 
 /// The producer end of a parking SPSC queue.
 ///
-/// After each write, this sender checks whether the receiver is parked
-/// and unparks it if so. The check is a single `Relaxed` atomic load
-/// when the receiver is not parked.
+/// # Examples
+///
+/// ```
+/// use core::num::NonZeroUsize;
+/// use gil::spsc::parking;
+///
+/// let (mut tx, mut rx) = parking::channel::<i32>(NonZeroUsize::new(16).unwrap());
+/// tx.send(1);
+/// tx.send(2);
+/// assert_eq!(rx.recv(), 1);
+/// assert_eq!(rx.recv(), 2);
+/// ```
 pub struct Sender<T> {
     ptr: QueuePtr<T>,
     local_head: usize,
@@ -24,10 +33,23 @@ impl<T> Sender<T> {
         }
     }
 
-    /// Attempts to send a value into the queue without blocking.
+    /// Attempts to send a value without blocking.
     ///
-    /// Returns `Ok(())` if the value was successfully enqueued, or `Err(value)` if the
-    /// queue is full, returning the original value.
+    /// Returns `Ok(())` if the value was enqueued, or `Err(value)` if the
+    /// queue is full.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::parking;
+    ///
+    /// let (mut tx, mut rx) = parking::channel::<i32>(NonZeroUsize::new(2).unwrap());
+    ///
+    /// assert!(tx.try_send(1).is_ok());
+    /// assert!(tx.try_send(2).is_ok());
+    /// assert!(tx.try_send(3).is_err()); // full
+    /// ```
     pub fn try_send(&mut self, value: T) -> Result<(), T> {
         let new_tail = self.local_tail.wrapping_add(1);
 
@@ -42,39 +64,104 @@ impl<T> Sender<T> {
         self.store_tail(new_tail);
         self.local_tail = new_tail;
 
-        self.ptr.unpark_receiver();
+        self.ptr.unpark();
 
         Ok(())
     }
 
-    /// Sends a value into the queue, blocking if necessary.
+    /// Sends a value, parking the thread if the queue is full.
     ///
-    /// Uses a default spin count of 128.
+    /// Uses default spin count 128 and yield count 10.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::parking;
+    ///
+    /// let (mut tx, mut rx) = parking::channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(42);
+    /// assert_eq!(rx.recv(), 42);
+    /// ```
     pub fn send(&mut self, value: T) {
-        self.send_with_spin_count(value, 128);
+        self.send_with_parking(value, 128, 10);
     }
 
-    /// Sends a value into the queue, blocking if necessary, using a custom spin count.
-    pub fn send_with_spin_count(&mut self, value: T, spin_count: u32) {
+    /// Sends a value with custom spin and yield counts before parking.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::parking;
+    ///
+    /// let (mut tx, mut rx) = parking::channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// // 256 spins, 20 yields before parking
+    /// tx.send_with_parking(42, 256, 20);
+    /// assert_eq!(rx.recv(), 42);
+    /// ```
+    pub fn send_with_parking(&mut self, value: T, spin_count: u32, yield_count: u32) {
         let new_tail = self.local_tail.wrapping_add(1);
 
-        let mut backoff = crate::Backoff::with_spin_count(spin_count);
-        while new_tail > self.max_tail() {
-            backoff.backoff();
+        if new_tail > self.max_tail() {
             self.load_head();
+            if new_tail > self.max_tail() {
+                let mut backoff = crate::ParkingBackoff::new(spin_count, yield_count);
+                loop {
+                    backoff.backoff(|| {
+                        self.ptr.store_thread();
+                        self.ptr.set_parked(true);
+
+                        // catch any lost unpark
+                        self.load_head();
+                        if new_tail <= self.max_tail() {
+                            self.ptr.set_parked(false);
+                            return;
+                        }
+
+                        crate::thread::park();
+                        self.ptr.set_parked(false);
+                    });
+
+                    self.load_head();
+                    if new_tail <= self.max_tail() {
+                        break;
+                    }
+                }
+            }
         }
 
         unsafe { self.ptr.set(self.local_tail, value) };
         self.store_tail(new_tail);
         self.local_tail = new_tail;
 
-        self.ptr.unpark_receiver();
+        self.ptr.unpark();
     }
 
-    /// Returns a mutable slice to the available write buffer in the queue.
+    /// Returns a mutable slice of the available write buffer.
     ///
     /// After writing to the buffer, call [`commit`](Sender::commit) to make
     /// the items visible to the receiver.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::parking;
+    ///
+    /// let (mut tx, mut rx) = parking::channel::<u64>(NonZeroUsize::new(16).unwrap());
+    ///
+    /// let buf = tx.write_buffer();
+    /// let n = buf.len().min(3);
+    /// for i in 0..n {
+    ///     buf[i].write(i as u64);
+    /// }
+    /// unsafe { tx.commit(n) };
+    ///
+    /// for i in 0..n {
+    ///     assert_eq!(rx.try_recv(), Some(i as u64));
+    /// }
+    /// ```
     pub fn write_buffer(&mut self) -> &mut [MaybeUninit<T>] {
         let mut available = self.ptr.size - self.local_tail.wrapping_sub(self.local_head);
 
@@ -93,13 +180,12 @@ impl<T> Sender<T> {
         }
     }
 
-    /// Commits items written to the buffer obtained via [`write_buffer`](Sender::write_buffer).
+    /// Commits items written via [`write_buffer`](Sender::write_buffer).
     ///
     /// # Safety
     ///
-    /// * `len` must be less than or equal to the length of the slice returned by the
-    ///   most recent call to [`write_buffer`](Sender::write_buffer).
-    /// * All `len` items in the buffer must have been initialized before calling this.
+    /// * `len` must be `<=` the length of the most recent [`write_buffer`](Sender::write_buffer) slice.
+    /// * All `len` items must have been initialized.
     #[inline(always)]
     pub unsafe fn commit(&mut self, len: usize) {
         #[cfg(debug_assertions)]
@@ -118,7 +204,7 @@ impl<T> Sender<T> {
         self.store_tail(new_tail);
         self.local_tail = new_tail;
 
-        self.ptr.unpark_receiver();
+        self.ptr.unpark();
     }
 
     #[inline(always)]

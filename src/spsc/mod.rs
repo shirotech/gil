@@ -1,7 +1,16 @@
 //! Single-producer single-consumer (SPSC) queue.
 //!
-//! This is the fastest queue variant, as it requires no atomic synchronization for the data buffer itself,
-//! only for the head and tail indices. It is inspired by the `ProducerConsumerQueue` in Facebook's Folly library.
+//! Lock-free ring buffer requiring only atomic loads/stores on head and tail
+//! indices. Inspired by Facebook Folly's
+//! [`ProducerConsumerQueue`](https://github.com/facebook/folly/blob/main/folly/ProducerConsumerQueue.h).
+//!
+//! The default [`channel`] uses a spin + yield backoff and never parks, giving
+//! the lowest possible latency but burning CPU while waiting. The [`parking`]
+//! sub-module provides a variant that parks threads after the spin + yield
+//! phase, trading some wakeup latency (microseconds vs nanoseconds) for
+//! near-zero CPU usage when idle. Use [`parking`] when the queue is
+//! frequently empty or full and you care more about CPU efficiency than
+//! tail latency.
 //!
 //! # Examples
 //!
@@ -22,47 +31,6 @@
 //!     assert_eq!(rx.recv(), i);
 //! }
 //! ```
-//!
-//! ## Async
-//!
-//! Async support is available with the `async` feature flag. See [`Sender::send_async`]
-//! and [`Receiver::recv_async`].
-//!
-//! ```rust,ignore
-//! use core::num::NonZeroUsize;
-//! use gil::spsc::channel;
-//!
-//! // In an async context:
-//! let (mut tx, mut rx) = channel::<usize>(NonZeroUsize::new(1024).unwrap());
-//! tx.send_async(42).await;
-//! let value = rx.recv_async().await;
-//! assert_eq!(value, 42);
-//! ```
-//!
-//! # Performance
-//!
-//! **Improvements over original inspiration:**
-//! - **Single Allocation:** The queue metadata (head/tail indices) and the data buffer are allocated
-//!   in a single contiguous memory block. This reduces cache misses by keeping related data close in memory.
-//! - **False Sharing Prevention:** The head and tail indices are explicitly padded to separate cache lines
-//!   to prevent false sharing between the producer and consumer cores.
-//!
-//! # When to use
-//!
-//! Use this queue for 1-to-1 thread communication. It offers the best possible throughput and latency.
-//!
-//! # Gotchas
-//!
-//! - **Not Cloneable:** Neither [`Sender`] nor [`Receiver`] implement `Clone`. They are `Send` but not
-//!   `Sync`, so they can be moved to another thread but not shared.
-//! - **Async Support:** This is the only queue variant with async support (`send_async`/`recv_async`).
-//!   Enable the `async` feature to use it.
-//! - **Batch Operations:** Use [`Sender::write_buffer`]/[`Sender::commit`] and
-//!   [`Receiver::read_buffer`]/[`Receiver::advance`] for zero-copy batch operations.
-//!
-//! # Reference
-//!
-//! * [Facebook Folly ProducerConsumerQueue](https://github.com/facebook/folly/blob/main/folly/ProducerConsumerQueue.h)
 
 use core::num::NonZeroUsize;
 

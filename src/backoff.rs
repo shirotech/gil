@@ -131,35 +131,32 @@ impl Backoff {
     }
 }
 
-/// A three-phase backoff strategy: spin, then yield, then signal readiness to park.
+/// A three-phase backoff strategy: spin, then yield, then park.
 ///
-/// This is designed for use with [`thread::park`](std::thread::park). The caller
-/// is responsible for setting up parking state and calling `park()` when
-/// [`backoff`](ParkingBackoff::backoff) returns `false`.
+/// Generic over the parking logic — the caller passes a closure that
+/// implements the full park protocol (register thread, set flag, re-check
+/// condition, park, clear flag). The backoff handles when to call it.
 ///
 /// The strategy works as follows:
 /// 1. For the first `spin_count` calls, the CPU spins via [`core::hint::spin_loop`].
 /// 2. For the next `yield_count` calls, the thread yields via
 ///    [`std::thread::yield_now`] (or [`core::hint::spin_loop`] in `no_std`).
-/// 3. After both phases are exhausted, [`backoff`](ParkingBackoff::backoff) returns
-///    `false`, indicating the caller should park the thread.
-///
-/// After waking from park, call [`reset`](ParkingBackoff::reset) to restart from
-/// the spinning phase.
+/// 3. After both phases are exhausted, the `park` closure is invoked and the
+///    counters are reset.
 ///
 /// # Examples
 ///
 /// ```
 /// use gil::ParkingBackoff;
 ///
+/// let mut parked = false;
 /// let mut backoff = ParkingBackoff::new(128, 10);
-/// // First 128 calls spin, next 10 yield, then returns false
+/// // First 128 calls spin, next 10 yield, then calls the closure
 /// for _ in 0..138 {
-///     assert!(backoff.backoff());
+///     backoff.backoff(|| panic!("not yet"));
 /// }
-/// assert!(!backoff.backoff()); // ready to park
-/// backoff.reset();
-/// assert!(backoff.backoff()); // spinning again
+/// backoff.backoff(|| parked = true); // park closure invoked
+/// assert!(parked);
 /// ```
 pub struct ParkingBackoff {
     spin_count: u32,
@@ -182,23 +179,25 @@ impl ParkingBackoff {
 
     /// Performs one backoff step.
     ///
-    /// Returns `true` if a spin or yield was performed. Returns `false` when
-    /// both phases are exhausted and the caller should park the thread.
+    /// During the spin phase, calls [`core::hint::spin_loop`]. During the
+    /// yield phase, calls [`std::thread::yield_now`]. Once both phases are
+    /// exhausted, invokes `park` and resets the counters.
     ///
-    /// After parking and waking, call [`reset`](ParkingBackoff::reset) to
-    /// restart from the spinning phase.
+    /// The `park` closure should implement the full parking protocol
+    /// (e.g. register thread, set flag, re-check condition, park, clear flag).
+    /// After `backoff` returns the caller should always re-check the wait
+    /// condition.
     #[inline(always)]
-    pub fn backoff(&mut self) -> bool {
+    pub fn backoff(&mut self, park: impl FnOnce()) {
         if self.spins < self.spin_count {
             crate::hint::spin_loop();
             self.spins += 1;
-            true
         } else if self.yields < self.yield_count {
             crate::thread::yield_now();
             self.yields += 1;
-            true
         } else {
-            false
+            park();
+            self.reset();
         }
     }
 

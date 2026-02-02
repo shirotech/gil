@@ -3,14 +3,16 @@ use core::ptr::NonNull;
 use crate::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     padded::Padded,
+    std_cell::UnsafeCell,
+    thread::Thread,
 };
 
 #[derive(Default)]
 #[repr(C)]
 pub(crate) struct Head {
     head: Padded<AtomicUsize>,
-    receiver_parked: AtomicBool,
-    receiver_thread: core::cell::UnsafeCell<Option<std::thread::Thread>>,
+    parked: Padded<AtomicBool>,
+    parked_thread: UnsafeCell<Option<Thread>>,
 }
 
 #[derive(Default)]
@@ -65,12 +67,12 @@ impl<T> QueuePtr<T> {
     }
 
     #[inline(always)]
-    pub(crate) fn store_receiver_thread(&self) {
+    pub(crate) fn store_thread(&self) {
         unsafe {
             let cell = _field!(
                 Queue,
                 self.ptr,
-                head.receiver_thread,
+                head.parked_thread,
                 core::cell::UnsafeCell<Option<std::thread::Thread>>
             );
             *(*cell.as_ptr()).get() = Some(std::thread::current());
@@ -78,27 +80,27 @@ impl<T> QueuePtr<T> {
     }
 
     #[inline(always)]
-    pub(crate) fn set_receiver_parked(&self, parked: bool) {
+    pub(crate) fn set_parked(&self, parked: bool) {
         unsafe {
-            _field!(Queue, self.ptr, head.receiver_parked, AtomicBool)
+            _field!(Queue, self.ptr, head.parked, AtomicBool)
                 .as_ref()
                 .store(parked, Ordering::Release);
         }
     }
 
-    /// Unparks the receiver if it is parked.
+    /// Unparks the parked thread (sender or receiver) if one is parked.
     ///
     /// Fast path is a single `Relaxed` load. Only escalates to a
-    /// read-modify-write when the receiver is actually parked.
+    /// read-modify-write when someone is actually parked.
     #[inline(always)]
-    pub(crate) fn unpark_receiver(&self) {
+    pub(crate) fn unpark(&self) {
         unsafe {
-            let flag = _field!(Queue, self.ptr, head.receiver_parked, AtomicBool).as_ref();
+            let flag = _field!(Queue, self.ptr, head.parked, AtomicBool).as_ref();
             if flag.load(Ordering::Relaxed) && flag.swap(false, Ordering::AcqRel) {
                 let cell = _field!(
                     Queue,
                     self.ptr,
-                    head.receiver_thread,
+                    head.parked_thread,
                     core::cell::UnsafeCell<Option<std::thread::Thread>>
                 );
                 if let Some(thread) = &*(*cell.as_ptr()).get() {

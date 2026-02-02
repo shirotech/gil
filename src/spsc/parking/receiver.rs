@@ -4,9 +4,18 @@ use super::queue::QueuePtr;
 
 /// The consumer end of a parking SPSC queue.
 ///
-/// When the queue is empty, the receiver spins briefly, then yields,
-/// then parks the thread via [`std::thread::park`]. The sender will
-/// unpark it when new data arrives.
+/// # Examples
+///
+/// ```
+/// use core::num::NonZeroUsize;
+/// use gil::spsc::parking;
+///
+/// let (mut tx, mut rx) = parking::channel::<i32>(NonZeroUsize::new(16).unwrap());
+/// tx.send(1);
+/// tx.send(2);
+/// assert_eq!(rx.recv(), 1);
+/// assert_eq!(rx.recv(), 2);
+/// ```
 pub struct Receiver<T> {
     ptr: QueuePtr<T>,
     local_tail: usize,
@@ -22,9 +31,22 @@ impl<T> Receiver<T> {
         }
     }
 
-    /// Attempts to receive a value from the queue without blocking.
+    /// Attempts to receive a value without blocking.
     ///
-    /// Returns `Some(value)` if a value is available, or `None` if the queue is empty.
+    /// Returns `Some(value)` if data is available, or `None` if the queue
+    /// is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::parking;
+    ///
+    /// let (mut tx, mut rx) = parking::channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// assert_eq!(rx.try_recv(), None);
+    /// tx.send(42);
+    /// assert_eq!(rx.try_recv(), Some(42));
+    /// ```
     pub fn try_recv(&mut self) -> Option<T> {
         if self.local_head == self.local_tail {
             self.load_tail();
@@ -38,23 +60,42 @@ impl<T> Receiver<T> {
         self.store_head(new_head);
         self.local_head = new_head;
 
+        self.ptr.unpark();
+
         Some(ret)
     }
 
-    /// Receives a value from the queue, parking the thread when idle.
+    /// Receives a value, parking the thread if the queue is empty.
     ///
-    /// Uses a three-phase backoff with default spin count 128 and yield
-    /// count 10. After both phases are exhausted the thread is parked
-    /// until the sender writes new data.
+    /// Uses default spin count 128 and yield count 10.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::parking;
+    ///
+    /// let (mut tx, mut rx) = parking::channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(42);
+    /// assert_eq!(rx.recv(), 42);
+    /// ```
     pub fn recv(&mut self) -> T {
         self.recv_with_parking(128, 10)
     }
 
-    /// Receives a value, with custom spin and yield counts before parking.
+    /// Receives a value with custom spin and yield counts before parking.
     ///
-    /// * `spin_count` — number of [`core::hint::spin_loop`] iterations.
-    /// * `yield_count` — number of [`std::thread::yield_now`] calls after
-    ///   spinning before the thread parks.
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::parking;
+    ///
+    /// let (mut tx, mut rx) = parking::channel::<i32>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(42);
+    /// // 256 spins, 20 yields before parking
+    /// assert_eq!(rx.recv_with_parking(256, 20), 42);
+    /// ```
     pub fn recv_with_parking(&mut self, spin_count: u32, yield_count: u32) -> T {
         // Fast path: data already locally visible
         if self.local_head != self.local_tail {
@@ -66,27 +107,22 @@ impl<T> Receiver<T> {
             return self.consume();
         }
 
-        // Slow path: spin → yield → park
         let mut backoff = crate::ParkingBackoff::new(spin_count, yield_count);
         loop {
-            if !backoff.backoff() {
-                // Prepare to park
-                self.ptr.store_receiver_thread();
-                self.ptr.set_receiver_parked(true);
+            backoff.backoff(|| {
+                self.ptr.store_thread();
+                self.ptr.set_parked(true);
 
-                // Re-check after setting the flag to prevent lost wakeup:
-                // if the sender wrote between our last load_tail and setting
-                // the flag, we'll see it here.
+                // catch lost unparks
                 self.load_tail();
                 if self.local_head != self.local_tail {
-                    self.ptr.set_receiver_parked(false);
-                    return self.consume();
+                    self.ptr.set_parked(false);
+                    return;
                 }
 
-                std::thread::park();
-                self.ptr.set_receiver_parked(false);
-                backoff.reset();
-            }
+                crate::thread::park();
+                self.ptr.set_parked(false);
+            });
 
             self.load_tail();
             if self.local_head != self.local_tail {
@@ -95,10 +131,26 @@ impl<T> Receiver<T> {
         }
     }
 
-    /// Returns a slice of the available read buffer in the queue.
+    /// Returns a slice of the available read buffer.
     ///
-    /// After reading from the buffer, call [`advance`](Receiver::advance) to
-    /// mark the items as consumed.
+    /// After reading, call [`advance`](Receiver::advance) to mark items as
+    /// consumed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::num::NonZeroUsize;
+    /// use gil::spsc::parking;
+    ///
+    /// let (mut tx, mut rx) = parking::channel::<u64>(NonZeroUsize::new(16).unwrap());
+    /// tx.send(10);
+    /// tx.send(20);
+    ///
+    /// let buf = rx.read_buffer();
+    /// assert_eq!(buf[0], 10);
+    /// assert_eq!(buf[1], 20);
+    /// unsafe { rx.advance(2) };
+    /// ```
     pub fn read_buffer(&mut self) -> &[T] {
         let mut available = self.local_tail.wrapping_sub(self.local_head);
 
@@ -121,8 +173,7 @@ impl<T> Receiver<T> {
     ///
     /// # Safety
     ///
-    /// * `len` must be less than or equal to the length of the slice returned by the
-    ///   most recent call to [`read_buffer`](Receiver::read_buffer).
+    /// * `len` must be `<=` the length of the most recent [`read_buffer`](Receiver::read_buffer) slice.
     #[inline(always)]
     pub unsafe fn advance(&mut self, len: usize) {
         #[cfg(debug_assertions)]
@@ -139,19 +190,19 @@ impl<T> Receiver<T> {
         let new_head = self.local_head.wrapping_add(len);
         self.store_head(new_head);
         self.local_head = new_head;
+
+        self.ptr.unpark();
     }
 
-    // ── private helpers ─────────────────────────────────────────────
-
-    /// Consumes one item at the current head. Caller must ensure head != tail.
     #[inline(always)]
     fn consume(&mut self) -> T {
-        // SAFETY: head != tail means queue is not empty and head has a valid
-        //         initialised value
         let ret = unsafe { self.ptr.get(self.local_head) };
         let new_head = self.local_head.wrapping_add(1);
         self.store_head(new_head);
         self.local_head = new_head;
+
+        self.ptr.unpark();
+
         ret
     }
 
