@@ -60,7 +60,7 @@ impl<T> Receiver<T> {
         self.store_head(new_head);
         self.local_head = new_head;
 
-        self.ptr.unpark();
+        self.ptr.try_unpark_sender();
 
         Some(ret)
     }
@@ -110,18 +110,17 @@ impl<T> Receiver<T> {
         let mut backoff = crate::ParkingBackoff::new(spin_count, yield_count);
         loop {
             backoff.backoff(|| {
-                self.ptr.store_thread();
-                self.ptr.set_parked(true);
+                self.ptr.set_receiver_parked();
 
-                // catch lost unparks
-                self.load_tail();
+                // SeqCst load: pairs with the SeqCst store in set_receiver_parked
+                // to form the Dekker pattern (store parked → load tail).
+                self.local_tail = self.ptr.tail().load(Ordering::SeqCst);
                 if self.local_head != self.local_tail {
-                    self.ptr.set_parked(false);
+                    self.ptr.clear_receiver_parked();
                     return;
                 }
 
-                crate::thread::park();
-                self.ptr.set_parked(false);
+                self.ptr.wait_as_receiver();
             });
 
             self.load_tail();
@@ -191,7 +190,7 @@ impl<T> Receiver<T> {
         self.store_head(new_head);
         self.local_head = new_head;
 
-        self.ptr.unpark();
+        self.ptr.try_unpark_sender();
     }
 
     #[inline(always)]
@@ -201,14 +200,14 @@ impl<T> Receiver<T> {
         self.store_head(new_head);
         self.local_head = new_head;
 
-        self.ptr.unpark();
+        self.ptr.try_unpark_sender();
 
         ret
     }
 
     #[inline(always)]
     fn store_head(&self, value: usize) {
-        self.ptr.head().store(value, Ordering::Release);
+        self.ptr.head().store(value, Ordering::SeqCst);
     }
 
     #[inline(always)]

@@ -1,18 +1,13 @@
 //! CPU-efficient SPSC variant that parks threads when idle.
 //!
 //! Same ring buffer as [`super::channel`] but both the sender and receiver
-//! will park their thread (via [`std::thread::park`]) after exhausting a
-//! spin + yield backoff phase. The other side calls
-//! [`Thread::unpark`](std::thread::Thread::unpark) after each write or
-//! consume to wake it.
-//!
-//! A single shared parking slot is used since sender and receiver parking
-//! are mutually exclusive: if the queue is full the sender parks (receiver
-//! can't be blocked — there's data), and if empty the receiver parks
-//! (sender can't be blocked — there's space).
+//! will park their thread after exhausting a spin + yield backoff phase.
+//! Uses [`atomic_wait`] for cross-platform futex-like wait/wake on separate
+//! per-side `AtomicU32` flags — one for the receiver (in `Head`) and one
+//! for the sender (in `Tail`).
 //!
 //! The unpark fast path when nobody is parked is a single `Relaxed` atomic
-//! load.
+//! load (after a `SeqCst` fence that prevents Dekker-pattern reordering).
 //!
 //! # Examples
 //!

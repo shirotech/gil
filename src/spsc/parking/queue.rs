@@ -1,24 +1,61 @@
 use core::ptr::NonNull;
 
 use crate::{
-    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+    atomic::{AtomicUsize, Ordering},
     padded::Padded,
-    std_cell::UnsafeCell,
-    thread::Thread,
 };
 
-#[derive(Default)]
+const NOT_PARKED: u32 = 0;
+const PARKED: u32 = 1;
+
 #[repr(C)]
 pub(crate) struct Head {
     head: Padded<AtomicUsize>,
-    parked: Padded<AtomicBool>,
-    parked_thread: UnsafeCell<Option<Thread>>,
+    #[cfg(not(feature = "loom"))]
+    receiver_parked: Padded<core::sync::atomic::AtomicU32>,
+    #[cfg(feature = "loom")]
+    receiver_parked: Padded<loom::sync::atomic::AtomicBool>,
+    #[cfg(feature = "loom")]
+    receiver_thread: core::mem::MaybeUninit<loom::thread::Thread>,
 }
 
-#[derive(Default)]
 #[repr(C)]
 pub(crate) struct Tail {
     tail: Padded<AtomicUsize>,
+    #[cfg(not(feature = "loom"))]
+    sender_parked: Padded<core::sync::atomic::AtomicU32>,
+    #[cfg(feature = "loom")]
+    sender_parked: Padded<loom::sync::atomic::AtomicBool>,
+    #[cfg(feature = "loom")]
+    sender_thread: core::mem::MaybeUninit<loom::thread::Thread>,
+}
+
+impl Default for Head {
+    fn default() -> Self {
+        Self {
+            head: Default::default(),
+            #[cfg(not(feature = "loom"))]
+            receiver_parked: Padded::new(core::sync::atomic::AtomicU32::new(NOT_PARKED)),
+            #[cfg(feature = "loom")]
+            receiver_parked: Default::default(),
+            #[cfg(feature = "loom")]
+            receiver_thread: core::mem::MaybeUninit::uninit(),
+        }
+    }
+}
+
+impl Default for Tail {
+    fn default() -> Self {
+        Self {
+            tail: Default::default(),
+            #[cfg(not(feature = "loom"))]
+            sender_parked: Padded::new(core::sync::atomic::AtomicU32::new(NOT_PARKED)),
+            #[cfg(feature = "loom")]
+            sender_parked: Default::default(),
+            #[cfg(feature = "loom")]
+            sender_thread: core::mem::MaybeUninit::uninit(),
+        }
+    }
 }
 
 pub(crate) struct GetInit;
@@ -30,7 +67,6 @@ impl<T> crate::DropInitItems<Head, Tail, T> for GetInit {
         _capacity: usize,
         at: impl Fn(usize) -> NonNull<T>,
     ) {
-        let x = AtomicU32::new(0);
         if !core::mem::needs_drop::<T>() {
             return;
         }
@@ -56,6 +92,18 @@ impl<T> crate::DropInitItems<Head, Tail, T> for GetInit {
 pub(crate) type QueuePtr<T> = crate::QueuePtr<Head, Tail, T, GetInit>;
 type Queue = crate::Queue<Head, Tail>;
 
+/// Dekker-pattern ordering for the parking protocol.
+///
+/// Each side stores to its own variable then loads the other's:
+///   Sender:   store(tail)          → load(receiver_parked)
+///   Receiver: store(receiver_parked) → load(tail)
+///   (and symmetrically for head / sender_parked)
+///
+/// All four operations in each pair must use `SeqCst` so they participate
+/// in a single total order. Without this the compiler may reorder the load
+/// before the store, missing a concurrent park and causing deadlock.
+/// On arm64 `SeqCst` store/load emit the same `stlr`/`ldar` as
+/// Release/Acquire — the constraint is purely on the compiler.
 impl<T> QueuePtr<T> {
     #[inline(always)]
     pub(crate) fn head(&self) -> &AtomicUsize {
@@ -67,46 +115,246 @@ impl<T> QueuePtr<T> {
         unsafe { _field!(Queue, self.ptr, tail.tail.value, AtomicUsize).as_ref() }
     }
 
-    #[inline(always)]
-    pub(crate) fn store_thread(&self) {
-        unsafe {
-            let cell = _field!(
-                Queue,
-                self.ptr,
-                head.parked_thread,
-                core::cell::UnsafeCell<Option<std::thread::Thread>>
-            );
-            *(*cell.as_ptr()).get() = Some(std::thread::current());
-        }
-    }
+    // ── receiver parking ───────────────────────────────────────────
 
     #[inline(always)]
-    pub(crate) fn set_parked(&self, parked: bool) {
+    pub(crate) fn set_receiver_parked(&self) {
         unsafe {
-            _field!(Queue, self.ptr, head.parked, AtomicBool)
-                .as_ref()
-                .store(parked, Ordering::Release);
-        }
-    }
-
-    /// Unparks the parked thread (sender or receiver) if one is parked.
-    ///
-    /// Fast path is a single `Relaxed` load. Only escalates to a
-    /// read-modify-write when someone is actually parked.
-    #[inline(always)]
-    pub(crate) fn unpark(&self) {
-        unsafe {
-            let flag = _field!(Queue, self.ptr, head.parked, AtomicBool).as_ref();
-            if flag.load(Ordering::Relaxed) && flag.swap(false, Ordering::AcqRel) {
-                let cell = _field!(
+            #[cfg(feature = "loom")]
+            {
+                let slot = _field!(
                     Queue,
                     self.ptr,
-                    head.parked_thread,
-                    core::cell::UnsafeCell<Option<std::thread::Thread>>
-                );
-                if let Some(thread) = &*(*cell.as_ptr()).get() {
-                    thread.unpark();
-                }
+                    head.receiver_thread,
+                    core::mem::MaybeUninit<loom::thread::Thread>
+                )
+                .as_mut();
+                slot.write(loom::thread::current());
+            }
+
+            #[cfg(not(feature = "loom"))]
+            _field!(
+                Queue,
+                self.ptr,
+                head.receiver_parked.value,
+                core::sync::atomic::AtomicU32
+            )
+            .as_ref()
+            .store(PARKED, Ordering::SeqCst);
+
+            #[cfg(feature = "loom")]
+            _field!(
+                Queue,
+                self.ptr,
+                head.receiver_parked.value,
+                loom::sync::atomic::AtomicBool
+            )
+            .as_ref()
+            .store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn clear_receiver_parked(&self) {
+        unsafe {
+            #[cfg(not(feature = "loom"))]
+            _field!(
+                Queue,
+                self.ptr,
+                head.receiver_parked.value,
+                core::sync::atomic::AtomicU32
+            )
+            .as_ref()
+            .store(NOT_PARKED, Ordering::Release);
+
+            #[cfg(feature = "loom")]
+            _field!(
+                Queue,
+                self.ptr,
+                head.receiver_parked.value,
+                loom::sync::atomic::AtomicBool
+            )
+            .as_ref()
+            .store(false, Ordering::Release);
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn wait_as_receiver(&self) {
+        #[cfg(not(feature = "loom"))]
+        unsafe {
+            let flag = _field!(
+                Queue,
+                self.ptr,
+                head.receiver_parked.value,
+                core::sync::atomic::AtomicU32
+            )
+            .as_ref();
+            atomic_wait::wait(flag, PARKED);
+        }
+        #[cfg(feature = "loom")]
+        {
+            loom::thread::park();
+            self.clear_receiver_parked();
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn try_unpark_receiver(&self) {
+        #[cfg(not(feature = "loom"))]
+        unsafe {
+            let flag = _field!(
+                Queue,
+                self.ptr,
+                head.receiver_parked.value,
+                core::sync::atomic::AtomicU32
+            )
+            .as_ref();
+            if flag.load(Ordering::SeqCst) == PARKED {
+                flag.store(NOT_PARKED, Ordering::Release);
+                atomic_wait::wake_one(flag);
+            }
+        }
+        #[cfg(feature = "loom")]
+        unsafe {
+            let flag = _field!(
+                Queue,
+                self.ptr,
+                head.receiver_parked.value,
+                loom::sync::atomic::AtomicBool
+            )
+            .as_ref();
+            if flag.load(Ordering::SeqCst) && flag.swap(false, Ordering::AcqRel) {
+                let slot = _field!(
+                    Queue,
+                    self.ptr,
+                    head.receiver_thread,
+                    core::mem::MaybeUninit<loom::thread::Thread>
+                )
+                .as_ref();
+                slot.assume_init_ref().unpark();
+            }
+        }
+    }
+
+    // ── sender parking ─────────────────────────────────────────────
+
+    #[inline(always)]
+    pub(crate) fn set_sender_parked(&self) {
+        unsafe {
+            #[cfg(feature = "loom")]
+            {
+                let slot = _field!(
+                    Queue,
+                    self.ptr,
+                    tail.sender_thread,
+                    core::mem::MaybeUninit<loom::thread::Thread>
+                )
+                .as_mut();
+                slot.write(loom::thread::current());
+            }
+
+            #[cfg(not(feature = "loom"))]
+            _field!(
+                Queue,
+                self.ptr,
+                tail.sender_parked.value,
+                core::sync::atomic::AtomicU32
+            )
+            .as_ref()
+            .store(PARKED, Ordering::SeqCst);
+
+            #[cfg(feature = "loom")]
+            _field!(
+                Queue,
+                self.ptr,
+                tail.sender_parked.value,
+                loom::sync::atomic::AtomicBool
+            )
+            .as_ref()
+            .store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn clear_sender_parked(&self) {
+        unsafe {
+            #[cfg(not(feature = "loom"))]
+            _field!(
+                Queue,
+                self.ptr,
+                tail.sender_parked.value,
+                core::sync::atomic::AtomicU32
+            )
+            .as_ref()
+            .store(NOT_PARKED, Ordering::Release);
+
+            #[cfg(feature = "loom")]
+            _field!(
+                Queue,
+                self.ptr,
+                tail.sender_parked.value,
+                loom::sync::atomic::AtomicBool
+            )
+            .as_ref()
+            .store(false, Ordering::Release);
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn wait_as_sender(&self) {
+        #[cfg(not(feature = "loom"))]
+        unsafe {
+            let flag = _field!(
+                Queue,
+                self.ptr,
+                tail.sender_parked.value,
+                core::sync::atomic::AtomicU32
+            )
+            .as_ref();
+            atomic_wait::wait(flag, PARKED);
+        }
+        #[cfg(feature = "loom")]
+        {
+            loom::thread::park();
+            self.clear_sender_parked();
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn try_unpark_sender(&self) {
+        #[cfg(not(feature = "loom"))]
+        unsafe {
+            let flag = _field!(
+                Queue,
+                self.ptr,
+                tail.sender_parked.value,
+                core::sync::atomic::AtomicU32
+            )
+            .as_ref();
+            if flag.load(Ordering::SeqCst) == PARKED {
+                flag.store(NOT_PARKED, Ordering::Release);
+                atomic_wait::wake_one(flag);
+            }
+        }
+        #[cfg(feature = "loom")]
+        unsafe {
+            let flag = _field!(
+                Queue,
+                self.ptr,
+                tail.sender_parked.value,
+                loom::sync::atomic::AtomicBool
+            )
+            .as_ref();
+            if flag.load(Ordering::SeqCst) && flag.swap(false, Ordering::AcqRel) {
+                let slot = _field!(
+                    Queue,
+                    self.ptr,
+                    tail.sender_thread,
+                    core::mem::MaybeUninit<loom::thread::Thread>
+                )
+                .as_ref();
+                slot.assume_init_ref().unpark();
             }
         }
     }

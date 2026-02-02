@@ -64,7 +64,7 @@ impl<T> Sender<T> {
         self.store_tail(new_tail);
         self.local_tail = new_tail;
 
-        self.ptr.unpark();
+        self.ptr.try_unpark_receiver();
 
         Ok(())
     }
@@ -109,18 +109,17 @@ impl<T> Sender<T> {
                 let mut backoff = crate::ParkingBackoff::new(spin_count, yield_count);
                 loop {
                     backoff.backoff(|| {
-                        self.ptr.store_thread();
-                        self.ptr.set_parked(true);
+                        self.ptr.set_sender_parked();
 
-                        // catch any lost unpark
-                        self.load_head();
+                        // SeqCst load: pairs with the SeqCst store in set_sender_parked
+                        // to form the Dekker pattern (store parked → load head).
+                        self.local_head = self.ptr.head().load(Ordering::SeqCst);
                         if new_tail <= self.max_tail() {
-                            self.ptr.set_parked(false);
+                            self.ptr.clear_sender_parked();
                             return;
                         }
 
-                        crate::thread::park();
-                        self.ptr.set_parked(false);
+                        self.ptr.wait_as_sender();
                     });
 
                     self.load_head();
@@ -135,7 +134,7 @@ impl<T> Sender<T> {
         self.store_tail(new_tail);
         self.local_tail = new_tail;
 
-        self.ptr.unpark();
+        self.ptr.try_unpark_receiver();
     }
 
     /// Returns a mutable slice of the available write buffer.
@@ -204,7 +203,7 @@ impl<T> Sender<T> {
         self.store_tail(new_tail);
         self.local_tail = new_tail;
 
-        self.ptr.unpark();
+        self.ptr.try_unpark_receiver();
     }
 
     #[inline(always)]
@@ -214,7 +213,7 @@ impl<T> Sender<T> {
 
     #[inline(always)]
     fn store_tail(&self, value: usize) {
-        self.ptr.tail().store(value, Ordering::Release);
+        self.ptr.tail().store(value, Ordering::SeqCst);
     }
 
     #[inline(always)]
