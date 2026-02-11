@@ -243,6 +243,30 @@ impl<T> Receiver<T> {
         }
     }
 
+    /// # Safety
+    pub unsafe fn read_buffer_advance(&mut self, out: *mut T) -> usize {
+        let mut available = self.local_tail.wrapping_sub(self.local_head);
+
+        if available == 0 {
+            self.load_tail();
+            available = self.local_tail.wrapping_sub(self.local_head);
+        }
+
+        let start = self.local_head & self.ptr.mask;
+        let contiguous = self.ptr.capacity - start;
+        let len = available.min(contiguous);
+
+        if len != 0 {
+            unsafe {
+                let ptr = self.ptr.exact_at(start).as_ptr();
+                core::ptr::copy_nonoverlapping(ptr, out, len);
+                self.advance(len);
+            }
+        }
+
+        len
+    }
+
     /// Advances the consumer head by `len` items.
     ///
     /// This marks items previously obtained via [`read_buffer`](Receiver::read_buffer)

@@ -183,6 +183,26 @@ impl<T> Receiver<T> {
         }
     }
 
+    /// # Safety
+    pub unsafe fn read_buffer_advance(&mut self, out: *mut T) -> usize {
+        let start = self.next_shard;
+        loop {
+            let len = unsafe { self.receivers[self.next_shard].read_buffer_advance(out) };
+            if len != 0 {
+                return len;
+            }
+
+            self.next_shard += 1;
+            if self.next_shard == self.max_shards {
+                self.next_shard = 0;
+            }
+
+            if self.next_shard == start {
+                return len;
+            }
+        }
+    }
+
     /// Advances the read pointer of the last shard accessed by [`read_buffer`](Receiver::read_buffer).
     ///
     /// # Safety
